@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -44,6 +45,44 @@ class ListenService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var recognizer: SpeechRecognizer? = null
+    private var errorStreak = 0
+
+    // ---- beep muting -------------------------------------------------
+    private val audio by lazy { getSystemService(AudioManager::class.java) }
+    private val beepStreams = intArrayOf(
+        AudioManager.STREAM_MUSIC,
+        AudioManager.STREAM_NOTIFICATION,
+        AudioManager.STREAM_SYSTEM
+    )
+    private val mutedByUs = mutableSetOf<Int>()
+
+    private fun muteBeep() {
+        for (s in beepStreams) {
+            if (s in mutedByUs) continue
+            try {
+                if (!audio.isStreamMute(s)) {
+                    audio.adjustStreamVolume(s, AudioManager.ADJUST_MUTE, 0)
+                    mutedByUs.add(s)
+                }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun unmuteBeep() {
+        for (s in mutedByUs.toList()) {
+            try {
+                audio.adjustStreamVolume(s, AudioManager.ADJUST_UNMUTE, 0)
+            } catch (_: Exception) {
+            }
+        }
+        mutedByUs.clear()
+    }
+
+    private val startRunnable = Runnable { startListening() }
+    private val unmuteRunnable = Runnable { unmuteBeep() }
+
+    // ------------------------------------------------------------------
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -56,7 +95,6 @@ class ListenService : Service() {
             !SpeechRecognizer.isRecognitionAvailable(this)
         ) {
             Toast.makeText(this, "Microphone or speech recognition unavailable", Toast.LENGTH_LONG).show()
-            // Must still satisfy the startForegroundService contract before stopping.
             try {
                 startForeground(NOTIF_ID, buildNotification("Unavailable"))
             } catch (_: SecurityException) {
@@ -83,6 +121,7 @@ class ListenService : Service() {
     override fun onDestroy() {
         running = false
         handler.removeCallbacksAndMessages(null)
+        unmuteBeep()
         recognizer?.destroy()
         recognizer = null
         super.onDestroy()
@@ -92,6 +131,7 @@ class ListenService : Service() {
 
     private fun startListening() {
         if (!running) return
+        muteBeep() // silence the "ding" that plays when the recognizer starts
         if (recognizer == null) {
             recognizer = SpeechRecognizer.createSpeechRecognizer(this).also {
                 it.setRecognitionListener(listener)
@@ -103,6 +143,8 @@ class ListenService : Service() {
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
         }
         try {
             recognizer?.startListening(intent)
@@ -113,8 +155,8 @@ class ListenService : Service() {
     }
 
     private fun restart(delayMs: Long) {
-        handler.removeCallbacksAndMessages(null)
-        handler.postDelayed({ startListening() }, delayMs)
+        handler.removeCallbacks(startRunnable)
+        handler.postDelayed(startRunnable, delayMs)
     }
 
     private fun resetRecognizer() {
@@ -123,11 +165,24 @@ class ListenService : Service() {
     }
 
     private val listener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) {}
-        override fun onBeginningOfSpeech() {}
+        override fun onReadyForSpeech(params: Bundle?) {
+            // start-beep has played by now; restore sound shortly after
+            handler.removeCallbacks(unmuteRunnable)
+            handler.postDelayed(unmuteRunnable, 300)
+        }
+
+        override fun onBeginningOfSpeech() {
+            errorStreak = 0
+        }
+
+        override fun onEndOfSpeech() {
+            // mute again before the "stop" beep
+            handler.removeCallbacks(unmuteRunnable)
+            muteBeep()
+        }
+
         override fun onRmsChanged(rmsdB: Float) {}
         override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onEndOfSpeech() {}
         override fun onPartialResults(partialResults: Bundle?) {}
         override fun onEvent(eventType: Int, params: Bundle?) {}
 
@@ -137,16 +192,25 @@ class ListenService : Service() {
                     stopSelf()
                     return
                 }
+                // Normal "nobody spoke" cases: restart quietly and immediately.
                 SpeechRecognizer.ERROR_NO_MATCH,
-                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> restart(200)
+                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> restart(100)
+                // Real errors: back off so we never spin in a tight loop.
                 else -> {
+                    errorStreak++
                     resetRecognizer()
-                    restart(1000)
+                    val delay = minOf(1000L * errorStreak, 5000L)
+                    if (delay > 1500) {
+                        handler.removeCallbacks(unmuteRunnable)
+                        unmuteBeep()
+                    }
+                    restart(delay)
                 }
             }
         }
 
         override fun onResults(results: Bundle?) {
+            errorStreak = 0
             val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
             if (list.isNotEmpty()) {
                 val feedback = OpenVoiceService.instance?.handleSpeech(list)
@@ -155,7 +219,7 @@ class ListenService : Service() {
                 getSystemService(NotificationManager::class.java)
                     .notify(NOTIF_ID, buildNotification(feedback))
             }
-            restart(150)
+            restart(100)
         }
     }
 
