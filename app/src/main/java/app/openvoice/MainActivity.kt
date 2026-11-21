@@ -17,6 +17,7 @@ import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 
 class MainActivity : Activity() {
@@ -51,6 +52,21 @@ class MainActivity : Activity() {
         layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(56)).apply { topMargin = dp(12) }
     }
 
+    private fun switchRow(title: String, key: String) = Switch(this).apply {
+        text = title
+        textSize = 15f
+        setTextColor(Color.WHITE)
+        isChecked = Prefs.get(this@MainActivity, key)
+        setOnCheckedChangeListener { _, on ->
+            Prefs.set(this@MainActivity, key, on)
+            if (key == Prefs.KEY_STATUS) {
+                val svc = OpenVoiceService.instance
+                if (on && ListenService.running) svc?.showIdle() else if (!on) svc?.hideStatus()
+            }
+        }
+        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(14) }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = Color.BLACK
@@ -81,21 +97,37 @@ class MainActivity : Activity() {
         heardText = label("Last command: —", 14f, top = 20)
         col.addView(heardText)
 
+        col.addView(label("Overlays", 15f, bold = true, top = 24))
+        col.addView(switchRow("Top bar: what I'm hearing", Prefs.KEY_STATUS))
+        col.addView(switchRow("Show taps & swipes", Prefs.KEY_FX))
+
         col.addView(
             label(
                 "COMMANDS\n\n" +
+                    "SEE & TAP\n" +
                     "show numbers · hide numbers\n" +
-                    "tap 5 · long press 5\n" +
+                    "tap 5 · double tap 5 · long press 5\n" +
                     "click <text on screen>\n" +
-                    "scroll down · scroll up\n" +
-                    "swipe left · swipe right\n" +
+                    "show grid → say 1-9 to zoom → tap / double tap / hold\n" +
+                    "cancel (hides numbers and grid)\n\n" +
+                    "MOVE\n" +
+                    "scroll down · up · left · right\n" +
+                    "scroll to top · scroll to bottom\n" +
+                    "swipe left · right · up · down · refresh\n\n" +
+                    "NAVIGATE\n" +
                     "go back · go home · recents\n" +
                     "notifications · quick settings\n" +
-                    "open <app name>\n" +
-                    "type <text>\n" +
-                    "start dictation · stop dictation\n" +
-                    "clear text · enter\n" +
-                    "stop listening",
+                    "screenshot · lock screen · power menu · split screen\n" +
+                    "open <app name>\n\n" +
+                    "TEXT\n" +
+                    "type <text> · start dictation · stop dictation\n" +
+                    "select all · copy · paste · cut\n" +
+                    "delete · delete word · clear text · new line · enter\n\n" +
+                    "DEVICE\n" +
+                    "volume up · volume down · mute · unmute\n\n" +
+                    "CONTROL\n" +
+                    "pause listening · resume listening\n" +
+                    "show commands · stop listening",
                 14f, top = 32
             )
         )

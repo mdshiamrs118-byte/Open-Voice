@@ -1,27 +1,71 @@
 package app.openvoice
 
 sealed class Command {
+    // navigation
     object Back : Command()
     object Home : Command()
     object Recents : Command()
     object Notifications : Command()
     object QuickSettings : Command()
+    object Screenshot : Command()
+    object LockScreen : Command()
+    object PowerMenu : Command()
+    object SplitScreen : Command()
+
+    // scrolling / swiping
     object ScrollDown : Command()
     object ScrollUp : Command()
+    object ScrollLeft : Command()
+    object ScrollRight : Command()
+    object ScrollTop : Command()
+    object ScrollBottom : Command()
     object SwipeLeft : Command()
     object SwipeRight : Command()
+    object SwipeUp : Command()
+    object SwipeDown : Command()
+    object Refresh : Command()
+
+    // numbers + grid
     object ShowNumbers : Command()
     object HideNumbers : Command()
+    object ShowGrid : Command()
+    object HideGrid : Command()
+    object HideAll : Command()
+    object TapHere : Command()
+    object DoubleTapHere : Command()
+    object LongPressHere : Command()
+    data class GridPick(val digits: List<Int>) : Command()
+    data class Tap(val number: Int) : Command()
+    data class DoubleTap(val number: Int) : Command()
+    data class LongPress(val number: Int) : Command()
+    data class ClickText(val text: String) : Command()
+
+    // text
+    data class TypeText(val text: String) : Command()
     object ClearText : Command()
+    object SelectAll : Command()
+    object Copy : Command()
+    object Paste : Command()
+    object Cut : Command()
+    object Delete : Command()
+    object DeleteWord : Command()
+    object NewLine : Command()
     object Enter : Command()
     object DictationOn : Command()
     object DictationOff : Command()
-    object StopListening : Command()
-    data class Tap(val number: Int) : Command()
-    data class LongPress(val number: Int) : Command()
-    data class ClickText(val text: String) : Command()
+
+    // device / app
     data class OpenApp(val name: String) : Command()
-    data class TypeText(val text: String) : Command()
+    object VolumeUp : Command()
+    object VolumeDown : Command()
+    object Mute : Command()
+    object Unmute : Command()
+
+    // control
+    object Sleep : Command()
+    object Wake : Command()
+    object ShowCommands : Command()
+    object StopListening : Command()
     object Unknown : Command()
 }
 
@@ -55,59 +99,114 @@ object CommandParser {
         }
     }
 
+    /** Used while the grid is showing: "5", "five", "2 5 1", "251" -> [2,5,1]. Digits 1-9 only. */
+    fun parseGridPicks(s: String): List<Int>? {
+        val t = s.trim().lowercase().trimEnd('.', '!', '?', ',')
+        if (t.isEmpty()) return null
+        val compact = t.replace(" ", "")
+        if (compact.all { it in '1'..'9' }) return compact.map { it - '0' }
+        val picks = t.split(" ").filter { it.isNotEmpty() }.map { units[it] }
+        return if (picks.isNotEmpty() && picks.all { it != null && it in 1..9 }) picks.map { it!! } else null
+    }
+
+    private val exact: Map<String, Command> = buildMap<String, Command> {
+        fun add(c: Command, vararg phrases: String) = phrases.forEach { put(it, c) }
+
+        add(Command.Back, "back", "go back", "press back")
+        add(Command.Home, "home", "go home", "press home")
+        add(Command.Recents, "recents", "recent apps", "show recents", "overview")
+        add(Command.Notifications, "notifications", "show notifications", "open notifications")
+        add(Command.QuickSettings, "quick settings", "open quick settings")
+        add(Command.Screenshot, "screenshot", "take screenshot", "take a screenshot")
+        add(Command.LockScreen, "lock screen", "lock phone")
+        add(Command.PowerMenu, "power menu", "power options")
+        add(Command.SplitScreen, "split screen")
+
+        add(Command.ScrollDown, "scroll down", "page down")
+        add(Command.ScrollUp, "scroll up", "page up")
+        add(Command.ScrollLeft, "scroll left")
+        add(Command.ScrollRight, "scroll right")
+        add(Command.ScrollTop, "scroll to top", "go to top", "scroll top")
+        add(Command.ScrollBottom, "scroll to bottom", "go to bottom", "scroll bottom")
+        add(Command.SwipeLeft, "swipe left")
+        add(Command.SwipeRight, "swipe right")
+        add(Command.SwipeUp, "swipe up")
+        add(Command.SwipeDown, "swipe down")
+        add(Command.Refresh, "refresh", "pull to refresh")
+
+        add(Command.ShowNumbers, "show numbers", "show number", "numbers on")
+        add(Command.HideNumbers, "hide numbers", "hide number", "numbers off")
+        add(Command.ShowGrid, "show grid", "grid", "grid on")
+        add(Command.HideGrid, "hide grid", "close grid", "grid off")
+        add(Command.HideAll, "cancel", "hide all", "clear screen")
+        add(Command.TapHere, "tap", "click", "tap here", "click here")
+        add(Command.DoubleTapHere, "double tap", "double click")
+        add(Command.LongPressHere, "long press", "hold", "press and hold")
+
+        add(Command.ClearText, "clear", "clear text", "delete all")
+        add(Command.SelectAll, "select all")
+        add(Command.Copy, "copy", "copy that")
+        add(Command.Paste, "paste")
+        add(Command.Cut, "cut", "cut that")
+        add(Command.Delete, "delete", "backspace", "delete that")
+        add(Command.DeleteWord, "delete word", "delete last word")
+        add(Command.NewLine, "new line", "next line")
+        add(Command.Enter, "enter", "press enter", "submit")
+        add(Command.DictationOn, "start dictation", "dictation", "dictate")
+        add(Command.DictationOff, "stop dictation", "end dictation")
+
+        add(Command.VolumeUp, "volume up", "louder")
+        add(Command.VolumeDown, "volume down", "quieter")
+        add(Command.Mute, "mute", "mute volume")
+        add(Command.Unmute, "unmute", "unmute volume")
+
+        add(Command.Sleep, "pause listening", "pause voice", "go to sleep")
+        add(Command.Wake, "resume listening", "wake up", "start listening")
+        add(Command.ShowCommands, "show commands", "what can i say")
+        add(Command.StopListening, "stop listening", "stop voice")
+    }
+
     private val tapVerbs = listOf("tap ", "click ", "press ", "select ", "touch ")
+
+    private fun cleanTarget(s: String): String =
+        s.trim().removePrefix("on ").removePrefix("the ").trim()
 
     fun parse(raw: String): Command {
         val t = raw.trim().lowercase().trimEnd('.', '!', '?', ',').replace(Regex("\\s+"), " ")
         if (t.isEmpty()) return Command.Unknown
 
-        when (t) {
-            "back", "go back", "press back" -> return Command.Back
-            "home", "go home", "press home" -> return Command.Home
-            "recents", "recent apps", "show recents", "overview" -> return Command.Recents
-            "notifications", "show notifications", "open notifications" -> return Command.Notifications
-            "quick settings", "open quick settings" -> return Command.QuickSettings
-            "scroll down", "page down" -> return Command.ScrollDown
-            "scroll up", "page up" -> return Command.ScrollUp
-            "swipe left" -> return Command.SwipeLeft
-            "swipe right" -> return Command.SwipeRight
-            "show numbers", "show number", "numbers on" -> return Command.ShowNumbers
-            "hide numbers", "hide number", "numbers off" -> return Command.HideNumbers
-            "clear", "clear text", "delete all" -> return Command.ClearText
-            "enter", "press enter", "submit" -> return Command.Enter
-            "start dictation", "dictation", "dictate" -> return Command.DictationOn
-            "stop dictation", "end dictation" -> return Command.DictationOff
-            "stop listening", "stop voice" -> return Command.StopListening
-        }
+        exact[t]?.let { return it }
 
-        for (v in listOf("long press ", "long click ")) {
+        for (v in listOf("double tap ", "double click ")) {
             if (t.startsWith(v)) {
-                parseNumber(t.removePrefix(v))?.let { return Command.LongPress(it) }
+                parseNumber(cleanTarget(t.removePrefix(v)))?.let { return Command.DoubleTap(it) }
             }
         }
-
+        for (v in listOf("long press ", "long click ", "hold ")) {
+            if (t.startsWith(v)) {
+                parseNumber(cleanTarget(t.removePrefix(v)))?.let { return Command.LongPress(it) }
+            }
+        }
         for (v in tapVerbs) {
             if (t.startsWith(v)) {
-                val rest = t.removePrefix(v).trim()
+                val rest = cleanTarget(t.removePrefix(v))
                 if (rest.isEmpty()) return Command.Unknown
                 parseNumber(rest)?.let { return Command.Tap(it) }
                 return Command.ClickText(rest)
             }
         }
-
-        if (t.startsWith("open ")) {
-            val name = t.removePrefix("open ").trim()
-            if (name.isNotEmpty()) return Command.OpenApp(name)
+        for (v in listOf("open ", "launch ", "go to ")) {
+            if (t.startsWith(v)) {
+                val name = t.removePrefix(v).trim()
+                if (name.isNotEmpty()) return Command.OpenApp(name)
+            }
         }
-
         for (v in listOf("type ", "write ")) {
             if (t.startsWith(v)) {
-                // keep the original casing of what was said
                 val original = raw.trim().substring(v.length).trim()
                 if (original.isNotEmpty()) return Command.TypeText(original)
             }
         }
-
         return Command.Unknown
     }
 }

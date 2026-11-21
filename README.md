@@ -10,18 +10,29 @@ Accessibility Service API.
 
 | Say | Does |
 |---|---|
-| `show numbers` / `hide numbers` | Overlay a number on every tappable element |
-| `tap 5` / `long press 5` | Tap or long-press item 5 |
+| `show numbers` / `hide numbers` | Number badges on every tappable element |
+| `tap 5`, `double tap 5`, `long press 5` | Act on item 5 |
 | `click <text>` | Tap the element whose text or description matches |
-| `scroll down` / `scroll up` | Scroll the main list or page |
-| `swipe left` / `swipe right` | Swipe gesture |
-| `go back`, `go home`, `recents` | Global navigation |
-| `notifications`, `quick settings` | Open the shade / quick settings |
+| `show grid`, then `1`–`9` (repeat to zoom), then `tap` / `double tap` / `hold` | Tap anywhere, even in apps with no accessibility info |
+| `cancel` | Hide numbers and grid |
+| `scroll down/up/left/right`, `scroll to top/bottom` | Scroll |
+| `swipe left/right/up/down`, `refresh` | Swipe gestures |
+| `go back`, `go home`, `recents`, `notifications`, `quick settings` | Navigation |
+| `screenshot`, `lock screen`, `power menu`, `split screen` | System actions |
 | `open <app name>` | Launch an app |
-| `type <text>` | Type into the focused field |
-| `start dictation` / `stop dictation` | Everything you say is typed until you stop |
-| `clear text`, `enter` | Edit the focused field |
-| `stop listening` | Stop the microphone service |
+| `type <text>`, `start dictation` / `stop dictation` | Typing |
+| `select all`, `copy`, `paste`, `cut`, `delete`, `delete word`, `clear text`, `new line`, `enter` | Editing |
+| `volume up/down`, `mute`, `unmute` | Media volume |
+| `pause listening` / `resume listening` | Ignore everything except the wake phrase |
+| `show commands`, `stop listening` | Help / stop |
+
+## Overlays
+
+- **Top bar**: shows live speech, the result of each command, and the current mode
+  (listening, dictating, grid, paused).
+- **Tap & swipe indicators**: ripples where it taps, a ring for long-press, arrows for swipes.
+
+Both can be switched off in the app.
 
 ## Build
 

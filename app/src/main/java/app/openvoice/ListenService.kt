@@ -114,6 +114,7 @@ class ListenService : Service() {
             return START_NOT_STICKY
         }
         running = true
+        OpenVoiceService.instance?.showIdle()
         startListening()
         return START_NOT_STICKY
     }
@@ -122,6 +123,7 @@ class ListenService : Service() {
         running = false
         handler.removeCallbacksAndMessages(null)
         unmuteBeep()
+        OpenVoiceService.instance?.hideStatus()
         recognizer?.destroy()
         recognizer = null
         super.onDestroy()
@@ -139,7 +141,7 @@ class ListenService : Service() {
         }
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
@@ -169,10 +171,12 @@ class ListenService : Service() {
             // start-beep has played by now; restore sound shortly after
             handler.removeCallbacks(unmuteRunnable)
             handler.postDelayed(unmuteRunnable, 300)
+            OpenVoiceService.instance?.showIdle()
         }
 
         override fun onBeginningOfSpeech() {
             errorStreak = 0
+            OpenVoiceService.instance?.setStatus("● Hearing…")
         }
 
         override fun onEndOfSpeech() {
@@ -183,7 +187,12 @@ class ListenService : Service() {
 
         override fun onRmsChanged(rmsdB: Float) {}
         override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onPartialResults(partialResults: Bundle?) {}
+        override fun onPartialResults(partialResults: Bundle?) {
+            val p = partialResults
+                ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                ?.firstOrNull()
+            if (!p.isNullOrBlank()) OpenVoiceService.instance?.setStatus("“$p”")
+        }
         override fun onEvent(eventType: Int, params: Bundle?) {}
 
         override fun onError(error: Int) {
@@ -213,11 +222,17 @@ class ListenService : Service() {
             errorStreak = 0
             val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
             if (list.isNotEmpty()) {
-                val feedback = OpenVoiceService.instance?.handleSpeech(list)
+                val svc = OpenVoiceService.instance
+                val feedback = svc?.handleSpeech(list)
                     ?: "“${list[0]}” → enable the accessibility service first"
-                onHeard?.invoke(feedback)
-                getSystemService(NotificationManager::class.java)
-                    .notify(NOTIF_ID, buildNotification(feedback))
+                if (feedback.isNotEmpty()) {
+                    onHeard?.invoke(feedback)
+                    getSystemService(NotificationManager::class.java)
+                        .notify(NOTIF_ID, buildNotification(feedback))
+                    svc?.setStatus(feedback, 2500)
+                } else {
+                    svc?.showIdle()
+                }
             }
             restart(100)
         }
