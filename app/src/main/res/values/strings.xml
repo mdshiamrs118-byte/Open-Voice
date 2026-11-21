@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Open Voice</string>
+    <string name="accessibility_description">Control your phone with your voice. Open Voice reads what is on screen so it can tap, scroll, type and navigate when you tell it to.</string>
+</resources>
