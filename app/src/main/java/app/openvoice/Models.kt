@@ -14,7 +14,10 @@ enum class Mode(val label: String) {
 /** One step of a custom command. Parameters are stored as strings so the editor can be generic. */
 data class Action(val type: String, val params: Map<String, String> = emptyMap()) {
     fun p(key: String, def: String = ""): String = params[key] ?: def
-    fun num(key: String, def: Double): Double = params[key]?.toDoubleOrNull() ?: def
+    fun num(key: String, def: Double): Double {
+        val raw = params[key]?.trim() ?: return def
+        return raw.toDoubleOrNull() ?: CommandParser.parseNumber(raw.lowercase())?.toDouble() ?: def
+    }
 
     fun toJson(): JSONObject = JSONObject().put("type", type).put("params", JSONObject(params))
 

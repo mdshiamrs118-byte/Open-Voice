@@ -41,21 +41,40 @@ Both can be switched off in the app.
 
 Open the app → **Custom commands**.
 
-- **Trigger phrases**: as many as you like. End one with `{text}` to capture words, e.g.
-  `search for {text}` → open URL `https://www.google.com/search?q={text}`.
-- **Actions** (any number, reorderable): tap / double tap / long press / swipe at a screen
-  position (in %), play a recorded gesture, click text, wait, open app, open link, press a key or
-  system action, type text, scroll, run a built-in command, shell command, run another custom
-  command, show a message.
+- **Trigger phrases**: as many as you like. `{text}` can sit anywhere (`search for {text}`,
+  `open {text} app`) and captures what you said there.
+- **`{text}` and other placeholders work in every field of every action**: app names, URLs,
+  tap positions, wait times, intent extras, shell commands… Also available: `{clipboard}`,
+  `{time}`, `{hour}`, `{minute}`, `{date}`, `{weekday}`, `{battery}`, `{app}`, `{app_name}`,
+  `{random}`, `{error}`, and your own variables. Modifiers: `{text:url}`, `{text:sh}`,
+  `{text:upper}`, `{text:lower}`, `{text:trim}`.
+- **Flow control**: *If / Else if / Else / End if*, *Repeat N*, *While*, *End loop*, *Break*,
+  *Continue*, *Wait until*, *Stop*, *Try / Catch / End try*, *Run another command*.
+  Conditions can be combined (AND / OR) and inverted (NOT). Checks: value comparison
+  (equals, contains, starts/ends with, regex, empty, numeric <, >, ≤, ≥), foreground app,
+  text on screen, app installed, time window, day of week, battery level, charging, internet,
+  Wi-Fi, device locked, orientation, random chance.
+- **Variables**: *Set variable* (set, add, subtract, multiply, append, clear; this run or saved
+  across runs) and *Read into variable* (clipboard, focused field, screen text, foreground app…).
+- **Touch & gestures**: tap / double tap / long press / swipe at a position (in %), recorded
+  gestures, scroll, click text.
+- **Apps, links & shortcuts**: open app, open link, **trigger another app's shortcut** (the ones
+  shown when you long-press an icon; pick with *Browse*), **custom intents** (activity,
+  broadcast or service with extras), shell command.
+- **Keys & text**: system keys, type text, run a built-in command, copy to clipboard.
+- **Feedback**: message in the top bar, speak aloud, vibrate.
 - **Repeat** the whole sequence up to 99 times; optionally keep going when an action fails.
 - **Run with**: *Normal* (accessibility), *Root* (`su`) or *Shizuku*. Root and Shizuku send taps,
-  swipes and key presses as shell `input` commands and unlock the **Shell command** action.
-  Multi-finger gestures only replay faithfully in Normal mode.
-- **Shortcut triggering**: add a pinned home-screen shortcut for any command, or fire one from
-  other apps (turn on *Allow other apps to trigger commands*):
+  swipes and key presses as shell `input` commands, can start app shortcuts that aren't
+  exported, and unlock the **Shell command** action.
+- **Shortcut triggering**: pin a home-screen shortcut for any command, or fire one from other apps
+  (turn on *Allow other apps to trigger commands*):
   `adb shell am start -a app.openvoice.action.RUN_COMMAND --es name "My command" --es text "hello"`
 - `run <name>` runs a command by name; `stop macro` cancels the running one.
 - **Export / Import** via the clipboard (commands and the gestures they use).
+
+Notes: reading `{clipboard}` can return nothing on newer Android when Open Voice isn't the focused
+app. App shortcuts only cover the *static* shortcuts an app declares.
 
 ## Gestures
 

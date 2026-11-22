@@ -12,7 +12,8 @@ object CustomMatcher {
 
     /**
      * Finds the custom command whose trigger phrase matches [heard].
-     * Phrases ending in {text} capture the rest of the sentence, e.g. "search for {text}".
+     * {text} can sit anywhere in a phrase and captures those words, e.g. "search for {text}"
+     * or "open {text} app".
      */
     fun match(heard: String, cmds: List<CustomCommand>): Match? {
         val hn = norm(heard)
@@ -24,12 +25,18 @@ object CustomMatcher {
             for (phrase in c.phrases) {
                 val pn = norm(phrase)
                 if (pn.isEmpty()) continue
-                if (pn.endsWith("{text}")) {
-                    val prefix = pn.removeSuffix("{text}").trim()
-                    if (prefix.isNotEmpty() && hn.startsWith("$prefix ") && hn.length > prefix.length + 1) {
-                        val skip = prefix.split(" ").size
-                        val words = heard.trim().split(Regex("\\s+"))
-                        val captured = words.drop(skip).joinToString(" ").trim()
+                if (pn.contains("{text}")) {
+                    val idx = pn.indexOf("{text}")
+                    val pre = pn.substring(0, idx).trim().split(" ").filter { it.isNotEmpty() }
+                    val suf = pn.substring(idx + 6).replace("{text}", "").trim().split(" ").filter { it.isNotEmpty() }
+                    if (pre.size + suf.size == 0) continue
+                    val hw = hn.split(" ").filter { it.isNotEmpty() }
+                    if (hw.size > pre.size + suf.size &&
+                        hw.take(pre.size) == pre && hw.takeLast(suf.size) == suf
+                    ) {
+                        val rawWords = heard.trim().split(Regex("\\s+"))
+                        val source = if (rawWords.size == hw.size) rawWords else hw
+                        val captured = source.subList(pre.size, source.size - suf.size).joinToString(" ").trim()
                         if (captured.isNotEmpty()) return Match(c, captured)
                     }
                 } else if (hn == pn) {

@@ -14,6 +14,16 @@ import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
+import android.app.KeyguardManager
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.res.Configuration
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.BatteryManager
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.speech.tts.TextToSpeech
 import kotlin.math.abs
 
 class OpenVoiceService : AccessibilityService() {
@@ -65,6 +75,9 @@ class OpenVoiceService : AccessibilityService() {
         if (::engine.isInitialized) engine.cancel()
         recorder?.cancel()
         recorder = null
+        tts?.shutdown()
+        tts = null
+        ttsReady = false
         if (::numbers.isInitialized) {
             numbers.hide()
             grid.hide()
@@ -729,6 +742,112 @@ class OpenVoiceService : AccessibilityService() {
         true
     } catch (e: Exception) {
         false
+    }
+
+    // ------------------------------------------------------------------
+    // Device state, used by conditions and {placeholders}
+    // ------------------------------------------------------------------
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+    private val ttsPending = ArrayList<String>()
+
+    internal fun foregroundPackage(): String? = rootInActiveWindow?.packageName?.toString()
+
+    internal fun appLabel(pkg: String): String = try {
+        packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+    } catch (e: Exception) {
+        pkg
+    }
+
+    internal fun packageInstalled(pkg: String): Boolean = try {
+        packageManager.getPackageInfo(pkg, 0)
+        true
+    } catch (e: Exception) {
+        false
+    }
+
+    internal fun screenHasText(t: String): Boolean {
+        if (t.isBlank()) return false
+        val root = rootInActiveWindow ?: return false
+        return (root.findAccessibilityNodeInfosByText(t) ?: emptyList()).any { it.isVisibleToUser }
+    }
+
+    internal fun screenText(max: Int = 2000): String {
+        val sb = StringBuilder()
+        fun walk(n: AccessibilityNodeInfo?) {
+            if (n == null || sb.length >= max || !n.isVisibleToUser) return
+            val t = n.text?.toString() ?: n.contentDescription?.toString()
+            if (!t.isNullOrBlank()) {
+                if (sb.isNotEmpty()) sb.append(" | ")
+                sb.append(t)
+            }
+            for (i in 0 until n.childCount) walk(n.getChild(i))
+        }
+        walk(rootInActiveWindow)
+        return sb.toString().take(max)
+    }
+
+    internal fun focusedText(): String = focusedInput()?.let { currentText(it) }.orEmpty()
+
+    internal fun batteryLevel(): Int =
+        getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+
+    internal fun isCharging(): Boolean = getSystemService(BatteryManager::class.java).isCharging
+
+    private fun netCaps(): NetworkCapabilities? {
+        val cm = getSystemService(ConnectivityManager::class.java)
+        val n = cm.activeNetwork ?: return null
+        return cm.getNetworkCapabilities(n)
+    }
+
+    internal fun internetConnected(): Boolean {
+        val c = netCaps() ?: return false
+        return c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
+    internal fun wifiConnected(): Boolean = netCaps()?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+
+    internal fun deviceLocked(): Boolean = getSystemService(KeyguardManager::class.java).isKeyguardLocked
+
+    internal fun isLandscape(): Boolean =
+        resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    /** Android may return nothing here when Open Voice isn't the focused app. */
+    internal fun clipboardText(): String = try {
+        getSystemService(ClipboardManager::class.java).primaryClip
+            ?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
+    } catch (e: Exception) {
+        ""
+    }
+
+    internal fun setClipboard(text: String): Boolean = try {
+        getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Open Voice", text))
+        true
+    } catch (e: Exception) {
+        false
+    }
+
+    internal fun speak(text: String) {
+        if (text.isBlank()) return
+        if (tts == null) {
+            tts = TextToSpeech(applicationContext) { st ->
+                ttsReady = st == TextToSpeech.SUCCESS
+                if (ttsReady) {
+                    ttsPending.forEach { tts?.speak(it, TextToSpeech.QUEUE_ADD, null, "ov") }
+                    ttsPending.clear()
+                }
+            }
+        }
+        if (ttsReady) tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "ov") else ttsPending.add(text)
+    }
+
+    internal fun vibrate(ms: Long) {
+        try {
+            getSystemService(Vibrator::class.java)
+                .vibrate(VibrationEffect.createOneShot(ms.coerceIn(10L, 5000L), VibrationEffect.DEFAULT_AMPLITUDE))
+        } catch (_: Exception) {
+        }
     }
 
     @Suppress("DEPRECATION")

@@ -93,6 +93,39 @@ class CommandsActivity : Activity() {
                 Action("key", mapOf("key" to "home"))
             )
         )
+        cmd(
+            "Open app or search", listOf("launch {text}"),
+            listOf(
+                Action("if", mapOf("check" to "app_installed", "right" to "{text}")),
+                Action("open_app", mapOf("name" to "{text}")),
+                Action("else"),
+                Action("open_uri", mapOf("uri" to "https://www.google.com/search?q={text}")),
+                Action("end_if")
+            )
+        )
+        cmd(
+            "Battery check", listOf("battery check"),
+            listOf(
+                Action("if", mapOf("check" to "battery_level", "op" to "lt", "right" to "20")),
+                Action("toast", mapOf("message" to "Battery low: {battery}%")),
+                Action("vibrate", mapOf("ms" to "300")),
+                Action("else"),
+                Action("toast", mapOf("message" to "Battery {battery}%")),
+                Action("end_if")
+            )
+        )
+        cmd(
+            "Scroll until text", listOf("scroll to {text}"),
+            listOf(
+                Action("repeat", mapOf("count" to "15")),
+                Action("if", mapOf("check" to "text_on_screen", "right" to "{text}")),
+                Action("stop", mapOf("message" to "Found “{text}”")),
+                Action("end_if"),
+                Action("scroll", mapOf("direction" to "down")),
+                Action("wait", mapOf("seconds" to "0.8")),
+                Action("end_loop")
+            )
+        )
         render()
         Toast.makeText(this, "Examples added", Toast.LENGTH_SHORT).show()
     }
