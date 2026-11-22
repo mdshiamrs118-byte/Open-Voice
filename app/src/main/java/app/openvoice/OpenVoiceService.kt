@@ -40,7 +40,7 @@ class OpenVoiceService : AccessibilityService() {
     private val refreshNumbers = Runnable {
         if (numbersOn) numbers.update(rootInActiveWindow)
     }
-    private val hideRunnable = Runnable { hideStatus() }
+    private val revertRunnable = Runnable { settle() }
 
     override fun onServiceConnected() {
         instance = this
@@ -76,21 +76,56 @@ class OpenVoiceService : AccessibilityService() {
     }
 
     // ------------------------------------------------------------------
-    // Top bar: shown only after something was heard / done
+    // Top bar. Two styles (Options in the app):
+    //   always visible  -> shows "● Listening" (or the current mode) all the time
+    //   only when speaking -> appears when you start talking, then hides after the result
     // ------------------------------------------------------------------
-    fun setStatus(text: String, holdMs: Long = 2500) {
+    fun idleText(): String = when {
+        sleeping -> "⏸ Paused · say “resume listening”"
+        dictation -> "✎ Dictating · say “stop dictation”"
+        grid.active -> "▦ ${grid.levelText()}"
+        else -> "● Listening"
+    }
+
+    private fun barEnabled() = ::status.isInitialized && Prefs.statusBar(this)
+
+    private fun showBar(text: String) {
         if (!::status.isInitialized) return
-        main.removeCallbacks(hideRunnable)
+        main.removeCallbacks(revertRunnable)
         if (!Prefs.statusBar(this)) {
             status.hide()
             return
         }
         status.show(text)
-        main.postDelayed(hideRunnable, holdMs)
+    }
+
+    /** Shows a message, then returns to the resting state after [holdMs]. */
+    fun setStatus(text: String, holdMs: Long = 2500) {
+        showBar(text)
+        if (barEnabled()) main.postDelayed(revertRunnable, holdMs)
+    }
+
+    /** Resting state: idle pill when "always visible" and listening, otherwise hidden. */
+    fun settle() {
+        if (!::status.isInitialized) return
+        main.removeCallbacks(revertRunnable)
+        if (Prefs.statusBar(this) && Prefs.statusAlways(this) && ListenService.running) {
+            status.show(idleText())
+        } else {
+            status.hide()
+        }
+    }
+
+    fun onSpeechStart() {
+        if (barEnabled()) showBar("● Hearing…")
+    }
+
+    fun onPartial(text: String) {
+        if (barEnabled()) showBar("“$text”")
     }
 
     fun hideStatus() {
-        main.removeCallbacks(hideRunnable)
+        main.removeCallbacks(revertRunnable)
         if (::status.isInitialized) status.hide()
     }
 
@@ -186,8 +221,15 @@ class OpenVoiceService : AccessibilityService() {
         }
 
         if (grid.active) {
+            if (alternatives.any {
+                    val t = it.trim().lowercase().trimEnd('.', '!', '?')
+                    t == "undo" || CommandParser.parse(t) == Command.Back
+                }
+            ) {
+                return "“undo” → ${gridUndo()}"
+            }
             for (a in alternatives) {
-                val picks = CommandParser.parseGridPicks(a) ?: continue
+                val picks = CommandParser.parseGridPicks(a, grid.cellCount()) ?: continue
                 return "“$a” → ${execute(Command.GridPick(picks))}"
             }
         }
@@ -297,8 +339,13 @@ class OpenVoiceService : AccessibilityService() {
         Command.ShowGrid -> {
             numbersOn = false
             numbers.hide()
-            grid.show()
-            "grid on"
+            grid.show(Prefs.gridMode(this))
+            grid.levelText()
+        }
+        is Command.SetGrid -> {
+            Prefs.setGridMode(this, cmd.mode)
+            if (grid.active) grid.show(cmd.mode)
+            "grid: ${cmd.mode.label} (${cmd.mode.summary})"
         }
         Command.HideGrid -> {
             grid.hide()
@@ -311,11 +358,7 @@ class OpenVoiceService : AccessibilityService() {
             "cleared"
         }
         is Command.GridPick -> {
-            if (!grid.active) "say “show grid” first"
-            else {
-                cmd.digits.forEach { grid.pick(it) }
-                "zoomed"
-            }
+            if (!grid.active) "say “show grid” first" else gridPicks(cmd.numbers)
         }
         Command.TapHere -> atGrid { x, y ->
             fxTap(x, y)
@@ -395,6 +438,30 @@ class OpenVoiceService : AccessibilityService() {
         val t = numbers.targets.firstOrNull { it.number == n }
             ?: return if (numbersOn) "no item $n" else "say “show numbers” first"
         return done(block(t))
+    }
+
+    /** Applies cell numbers in order: zooms in, and clicks on the final step. */
+    private fun gridPicks(nums: List<Int>): String {
+        for (n in nums) {
+            if (!grid.active) break
+            val max = grid.cellCount()
+            if (n !in 1..max) return "no cell $n (1–$max)"
+            val p = grid.pick(n)
+            if (p != null) {
+                grid.hide()
+                fxTap(p.x, p.y)
+                return if (tapRaw(p.x, p.y)) "clicked" else "failed"
+            }
+        }
+        return grid.levelText()
+    }
+
+    private fun gridUndo(): String {
+        if (!grid.undo()) {
+            grid.hide()
+            return "grid closed"
+        }
+        return grid.levelText()
     }
 
     private fun atGrid(block: (Float, Float) -> Boolean): String {

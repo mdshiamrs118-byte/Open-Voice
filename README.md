@@ -13,7 +13,9 @@ Accessibility Service API.
 | `show numbers` / `hide numbers` | Number badges on every tappable element |
 | `tap 5`, `double tap 5`, `long press 5` | Act on item 5 |
 | `click <text>` | Tap the element whose text or description matches |
-| `show grid`, then `1`–`9` (repeat to zoom), then `tap` / `double tap` / `hold` | Tap anywhere, even in apps with no accessibility info |
+| `show grid`, then a cell number | Numbered grid: saying a number zooms in, and clicks on the last step. Works in any app |
+| `set grid big` / `medium` / `small` | Big 3×5 → 3×3 → 3×3 → click · Medium 9×15 → 3×3 → click · Small 27×45 → click |
+| `undo` (while the grid shows) | Go back one grid step |
 | `cancel` | Hide numbers and grid |
 | `scroll down/up/left/right`, `scroll to top/bottom` | Scroll |
 | `swipe left/right/up/down`, `refresh` | Swipe gestures |
@@ -28,8 +30,9 @@ Accessibility Service API.
 
 ## Overlays
 
-- **Top bar**: appears only after Open Voice hears something, shows what it heard and the result
-  (for example `“scroll down” → done`), then disappears.
+- **Top bar**: two styles. *Only while speaking* (default) shows your live words and the result
+  (for example `“scroll down” → done`), then hides. *Always visible* keeps a `● Listening` pill on
+  screen and shows the current mode (dictating, grid step, paused).
 - **Tap & swipe indicators**: ripples where it taps, a ring for long-press, arrows for swipes.
 
 Both can be switched off in the app.

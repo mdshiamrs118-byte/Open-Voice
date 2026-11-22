@@ -14,6 +14,8 @@ import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -28,6 +30,8 @@ class MainActivity : Activity() {
     private lateinit var shizukuText: TextView
     private lateinit var toggle: Button
     private val ui = Handler(Looper.getMainLooper())
+    private lateinit var gridGroup: RadioGroup
+    private val gridIds = LinkedHashMap<GridMode, Int>()
 
     private val shizukuListener = Shizuku.OnRequestPermissionResultListener { _, _ ->
         runOnUiThread { refresh() }
@@ -40,7 +44,11 @@ class MainActivity : Activity() {
         isChecked = Prefs.get(this@MainActivity, key, def)
         setOnCheckedChangeListener { _, on ->
             Prefs.set(this@MainActivity, key, on)
-            if (key == Prefs.KEY_STATUS && !on) OpenVoiceService.instance?.hideStatus()
+            val svc = OpenVoiceService.instance
+            when (key) {
+                Prefs.KEY_STATUS -> if (!on) svc?.hideStatus() else svc?.settle()
+                Prefs.KEY_STATUS_ALWAYS -> svc?.settle()
+            }
         }
         layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = Ui.dp(this@MainActivity, 14) }
     }
@@ -100,9 +108,33 @@ class MainActivity : Activity() {
 
         // --- overlays / triggers ---
         col.addView(Ui.label(this, "Options", 20f, bold = true, top = 32))
-        col.addView(switchRow("Top bar: show what I said", Prefs.KEY_STATUS))
+        col.addView(switchRow("Top bar", Prefs.KEY_STATUS))
+        col.addView(switchRow("Top bar always visible (off = only while speaking)", Prefs.KEY_STATUS_ALWAYS, false))
         col.addView(switchRow("Show taps & swipes", Prefs.KEY_FX))
         col.addView(switchRow("Allow other apps to trigger commands", Prefs.KEY_EXTERNAL, false))
+
+        col.addView(Ui.label(this, "Grid size", 15f, bold = true, top = 22))
+        col.addView(
+            Ui.label(
+                this,
+                "Say “show grid”, then a cell number. Change it by voice: “set grid big / medium / small”.",
+                12f, top = 2, color = 0xAAFFFFFF.toInt()
+            )
+        )
+        gridGroup = RadioGroup(this)
+        for (m in GridMode.values()) {
+            val rb = RadioButton(this).apply {
+                text = "${m.label}: ${m.summary}"
+                setTextColor(Color.WHITE)
+                id = android.view.View.generateViewId()
+            }
+            gridIds[m] = rb.id
+            gridGroup.addView(rb)
+        }
+        gridGroup.setOnCheckedChangeListener { _, id ->
+            gridIds.entries.firstOrNull { it.value == id }?.key?.let { Prefs.setGridMode(this, it) }
+        }
+        col.addView(gridGroup)
 
         col.addView(
             Ui.label(
@@ -112,7 +144,9 @@ class MainActivity : Activity() {
                     "show numbers · hide numbers\n" +
                     "tap 5 · double tap 5 · long press 5\n" +
                     "click <text on screen>\n" +
-                    "show grid → say 1-9 to zoom → tap / double tap / hold\n" +
+                    "show grid → say a cell number: zooms in, then clicks\n" +
+                    "set grid big · medium · small · undo (grid step back)\n" +
+                    "in the grid: tap · double tap · hold click the centre of the current area\n" +
                     "cancel (hides numbers and grid)\n\n" +
                     "MOVE\n" +
                     "scroll down · up · left · right\n" +
@@ -172,6 +206,7 @@ class MainActivity : Activity() {
         toggle.text = if (ListenService.running) "3 · Stop listening" else "3 · Start listening"
         rootText.text = "Root: ${Shell.rootStatus()}"
         shizukuText.text = "Shizuku: ${Shell.shizukuStatus()}"
+        gridIds[Prefs.gridMode(this)]?.let { if (gridGroup.checkedRadioButtonId != it) gridGroup.check(it) }
     }
 
     private fun askPermissions() {

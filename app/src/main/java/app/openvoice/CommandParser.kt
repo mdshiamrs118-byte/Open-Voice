@@ -34,7 +34,8 @@ sealed class Command {
     object TapHere : Command()
     object DoubleTapHere : Command()
     object LongPressHere : Command()
-    data class GridPick(val digits: List<Int>) : Command()
+    data class GridPick(val numbers: List<Int>) : Command()
+    data class SetGrid(val mode: GridMode) : Command()
     data class Tap(val number: Int) : Command()
     data class DoubleTap(val number: Int) : Command()
     data class LongPress(val number: Int) : Command()
@@ -85,30 +86,73 @@ object CommandParser {
         "sixty" to 60, "seventy" to 70, "eighty" to 80, "ninety" to 90
     )
 
-    /** "7", "seven", "twenty one" -> number, otherwise null. */
-    fun parseNumber(s: String): Int? {
-        val t = s.trim()
-        t.toIntOrNull()?.let { return it }
-        val parts = t.split(" ").filter { it.isNotEmpty() }
-        return when (parts.size) {
-            1 -> units[parts[0]] ?: tens[parts[0]]
+    private fun below1000(tk: List<String>): Int? {
+        if (tk.isEmpty()) return 0
+        var i = 0
+        var v = 0
+        if (tk.size >= 2 && tk[1] == "hundred") {
+            val h = units[tk[0]] ?: return null
+            if (h !in 1..9) return null
+            v = h * 100
+            i = 2
+        } else if (tk[0] == "hundred") {
+            v = 100
+            i = 1
+        }
+        val rest = tk.drop(i)
+        return when (rest.size) {
+            0 -> v
+            1 -> v + (units[rest[0]] ?: tens[rest[0]] ?: return null)
             2 -> {
-                val a = tens[parts[0]]
-                val b = units[parts[1]]
-                if (a != null && b != null && b in 1..9) a + b else null
+                val a = tens[rest[0]] ?: return null
+                val b = units[rest[1]] ?: return null
+                if (b !in 1..9) return null
+                v + a + b
             }
             else -> null
         }
     }
 
-    /** Used while the grid is showing: "5", "five", "2 5 1", "251" -> [2,5,1]. Digits 1-9 only. */
-    fun parseGridPicks(s: String): List<Int>? {
+    /** "7", "1,215", "seven", "twenty one", "one hundred five", "one thousand two hundred fifteen" -> number. */
+    fun parseNumber(s: String): Int? {
+        val t = s.trim().replace(",", "")
+        t.toIntOrNull()?.let { return it }
+        val tokens = t.split(" ").filter { it.isNotEmpty() && it != "and" }
+        if (tokens.isEmpty()) return null
+        val ti = tokens.indexOf("thousand")
+        return if (ti >= 0) {
+            val left = if (ti == 0) 1 else below1000(tokens.subList(0, ti)) ?: return null
+            if (left <= 0) return null
+            val right = below1000(tokens.subList(ti + 1, tokens.size)) ?: return null
+            left * 1000 + right
+        } else {
+            below1000(tokens)
+        }
+    }
+
+    /**
+     * Used while the grid is showing. Returns the cell numbers to pick (usually one).
+     * On 3x3 steps a run of digits such as "5 2" or "52" picks several steps in a row.
+     * Returns a lone out-of-range number so the caller can say "no cell N".
+     */
+    fun parseGridPicks(s: String, max: Int): List<Int>? {
         val t = s.trim().lowercase().trimEnd('.', '!', '?', ',')
         if (t.isEmpty()) return null
-        val compact = t.replace(" ", "")
-        if (compact.all { it in '1'..'9' }) return compact.map { it - '0' }
-        val picks = t.split(" ").filter { it.isNotEmpty() }.map { units[it] }
-        return if (picks.isNotEmpty() && picks.all { it != null && it in 1..9 }) picks.map { it!! } else null
+        val single = parseNumber(t)
+        if (single != null && single in 1..max) return listOf(single)
+        if (max <= 9) {
+            val compact = t.replace(" ", "")
+            if (compact.length >= 2 && compact.all { it in '1'..'9' }) {
+                val d = compact.map { it - '0' }
+                if (d.first() <= max) return d
+            }
+            val words = t.split(" ").filter { it.isNotEmpty() }
+            if (words.size >= 2) {
+                val picks = words.map { units[it] }
+                if (picks.all { it != null && it in 1..9 } && picks.first()!! <= max) return picks.map { it!! }
+            }
+        }
+        return single?.let { listOf(it) }
     }
 
     private val exact: Map<String, Command> = buildMap<String, Command> {
@@ -141,6 +185,9 @@ object CommandParser {
         add(Command.ShowGrid, "show grid", "grid", "grid on")
         add(Command.HideGrid, "hide grid", "close grid", "grid off")
         add(Command.HideAll, "cancel", "hide all", "clear screen")
+        add(Command.SetGrid(GridMode.BIG), "set grid big", "grid big", "big grid", "set grid to big")
+        add(Command.SetGrid(GridMode.MEDIUM), "set grid medium", "grid medium", "medium grid", "set grid to medium")
+        add(Command.SetGrid(GridMode.SMALL), "set grid small", "grid small", "small grid", "set grid to small")
         add(Command.TapHere, "tap", "click", "tap here", "click here")
         add(Command.DoubleTapHere, "double tap", "double click")
         add(Command.LongPressHere, "long press", "hold", "press and hold")

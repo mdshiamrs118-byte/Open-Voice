@@ -114,6 +114,7 @@ class ListenService : Service() {
             return START_NOT_STICKY
         }
         running = true
+        OpenVoiceService.instance?.settle()
         startListening()
         return START_NOT_STICKY
     }
@@ -140,7 +141,7 @@ class ListenService : Service() {
         }
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
@@ -174,6 +175,7 @@ class ListenService : Service() {
 
         override fun onBeginningOfSpeech() {
             errorStreak = 0
+            OpenVoiceService.instance?.onSpeechStart()
         }
 
         override fun onEndOfSpeech() {
@@ -184,7 +186,12 @@ class ListenService : Service() {
 
         override fun onRmsChanged(rmsdB: Float) {}
         override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onPartialResults(partialResults: Bundle?) {}
+        override fun onPartialResults(partialResults: Bundle?) {
+            val p = partialResults
+                ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                ?.firstOrNull()
+            if (!p.isNullOrBlank()) OpenVoiceService.instance?.onPartial(p)
+        }
         override fun onEvent(eventType: Int, params: Bundle?) {}
 
         override fun onError(error: Int) {
@@ -195,7 +202,10 @@ class ListenService : Service() {
                 }
                 // Normal "nobody spoke" cases: restart quietly and immediately.
                 SpeechRecognizer.ERROR_NO_MATCH,
-                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> restart(100)
+                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
+                    OpenVoiceService.instance?.settle()
+                    restart(100)
+                }
                 // Real errors: back off so we never spin in a tight loop.
                 else -> {
                     errorStreak++
@@ -222,6 +232,8 @@ class ListenService : Service() {
                     getSystemService(NotificationManager::class.java)
                         .notify(NOTIF_ID, buildNotification(feedback))
                     svc?.setStatus(feedback, 2500)
+                } else {
+                    svc?.settle()
                 }
             }
             restart(100)
