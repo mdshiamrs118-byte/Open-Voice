@@ -51,6 +51,20 @@ object SystemToggles {
         s.lowercase().replace("-", " ").replace("‑", " ")
             .replace(Regex("[^a-z0-9' ]"), "").replace(Regex("\\s+"), " ").trim()
 
+    /** Finds the longest switch name mentioned anywhere in [text]; returns its key. */
+    fun find(text: String): String? {
+        val padded = " ${norm(text)} "
+        var best: String? = null
+        var bestLen = 0
+        for ((alias, key) in aliases) {
+            if (alias.length > bestLen && padded.contains(" $alias ")) {
+                best = key
+                bestLen = alias.length
+            }
+        }
+        return best
+    }
+
     fun canon(raw: String): String = aliases[norm(raw)] ?: norm(raw)
     fun known(raw: String): Boolean = aliases.containsKey(norm(raw))
     fun spec(key: String): Spec? = specs.firstOrNull { it.key == key }

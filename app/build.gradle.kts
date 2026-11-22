@@ -11,8 +11,11 @@ android {
         applicationId = "app.openvoice"
         minSdk = 26
         targetSdk = 34
-        versionCode = 8
-        versionName = "0.6.2"
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
+        versionCode = 9
+        versionName = "0.7.0"
     }
 
     buildTypes {
@@ -33,4 +36,5 @@ android {
 dependencies {
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.2")
 }

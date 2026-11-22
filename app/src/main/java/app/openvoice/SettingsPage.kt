@@ -15,6 +15,8 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
 
 /** Settings tab: everything that used to sit on the main screen. */
 class SettingsPage(private val a: MainActivity) {
@@ -33,6 +35,11 @@ class SettingsPage(private val a: MainActivity) {
     private val gridIds = LinkedHashMap<GridMode, Int>()
     private val sysIds = LinkedHashMap<Mode, Int>()
     private val sections = ArrayList<View>()
+    private lateinit var segNormal: TextView
+    private lateinit var segAi: TextView
+    private lateinit var aiStatus: TextView
+    private lateinit var sensGroup: RadioGroup
+    private val sensIds = LinkedHashMap<Int, Int>()
 
     init {
         val (sv, c) = Ui.scrollColumn(a)
@@ -60,6 +67,44 @@ class SettingsPage(private val a: MainActivity) {
             ListenService.stop(a)
             a.refreshAll()
         })
+
+        // ---- assistant mode ----
+        section("Assistant mode")
+        note("Normal understands the exact phrases listed in Commands. AI mode also understands everyday wording and can chain several tasks in one sentence (“open Chrome, search for cats and scroll down”), using a small on-device model. No chat, no cloud.")
+        val seg = LinearLayout(a).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = GradientDrawable().apply {
+                setColor(0xFF111111.toInt())
+                setStroke(Ui.dp(a, 1), 0x66FFFFFF)
+                cornerRadius = Ui.dp(a, 26).toFloat()
+            }
+            setPadding(Ui.dp(a, 4), Ui.dp(a, 4), Ui.dp(a, 4), Ui.dp(a, 4))
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, Ui.dp(a, 52)).apply { topMargin = Ui.dp(a, 12) }
+        }
+        segNormal = segButton("Normal") { setAiMode(false) }
+        segAi = segButton("AI") { setAiMode(true) }
+        seg.addView(segNormal, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
+        seg.addView(segAi, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
+        col.addView(seg)
+        aiStatus = statusLine()
+        col.addView(Ui.small(a, "Manage AI models") { a.startActivity(Intent(a, ModelsActivity::class.java)) })
+        col.addView(Ui.label(a, "AI sensitivity", 13f, bold = true, top = 14))
+        note("Strict only acts when it is sure. Loose guesses more.")
+        sensGroup = RadioGroup(a)
+        listOf("Strict", "Balanced", "Loose").forEachIndexed { i, name ->
+            val rb = RadioButton(a).apply {
+                text = name
+                setTextColor(Color.WHITE)
+                id = View.generateViewId()
+            }
+            sensIds[i] = rb.id
+            sensGroup.addView(rb)
+        }
+        sensGroup.setOnCheckedChangeListener { _, id ->
+            sensIds.entries.firstOrNull { it.value == id }?.key?.let { Prefs.setAiSensitivity(a, it) }
+        }
+        col.addView(sensGroup)
+        switchRow("Show multi-step progress in the top bar", Prefs.KEY_AI_PLAN, true)
 
         // ---- display ----
         section("Display & feedback")
@@ -139,6 +184,41 @@ class SettingsPage(private val a: MainActivity) {
         refresh()
     }
 
+    private fun segButton(text: String, onClick: () -> Unit) = TextView(a).apply {
+        this.text = text
+        textSize = 15f
+        gravity = Gravity.CENTER
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        setOnClickListener { onClick() }
+        Anim.press(this)
+    }
+
+    private fun styleSeg() {
+        val ai = Prefs.aiMode(a)
+        fun style(v: TextView, sel: Boolean) {
+            v.setTextColor(if (sel) Color.BLACK else 0xAAFFFFFF.toInt())
+            v.background = if (sel) GradientDrawable().apply {
+                setColor(Color.WHITE)
+                cornerRadius = Ui.dp(a, 22).toFloat()
+            } else null
+        }
+        style(segNormal, !ai)
+        style(segAi, ai)
+    }
+
+    fun setAiMode(on: Boolean) {
+        if (on && !AiEngine.ready(a)) {
+            Toast.makeText(a, "Download an AI model first", Toast.LENGTH_LONG).show()
+            a.startActivity(Intent(a, ModelsActivity::class.java))
+            styleSeg()
+            return
+        }
+        Prefs.set(a, Prefs.KEY_AI_MODE, on)
+        if (on) AiEngine.preload(a)
+        styleSeg()
+        a.refreshAll()
+    }
+
     private fun section(title: String) {
         val h = Ui.label(a, title.uppercase(), 12f, bold = true, top = 28, color = dim)
         col.addView(h)
@@ -181,6 +261,10 @@ class SettingsPage(private val a: MainActivity) {
         writeText.text = if (Settings.System.canWrite(a)) "● Modify system settings: allowed" else "○ Modify system settings: not allowed"
         rootText.text = "Root: ${Shell.rootStatus()}"
         shizukuText.text = "Shizuku: ${Shell.shizukuStatus()}"
+        styleSeg()
+        val m = AiEngine.activeModel(a)
+        aiStatus.text = if (m == null) "No AI model installed" else "Model: ${m.title} · ${AiEngine.statusText}"
+        sensIds[Prefs.aiSensitivity(a)]?.let { if (sensGroup.checkedRadioButtonId != it) sensGroup.check(it) }
         gridIds[Prefs.gridMode(a)]?.let { if (gridGroup.checkedRadioButtonId != it) gridGroup.check(it) }
         sysIds[Prefs.sysMode(a)]?.let { if (sysGroup.checkedRadioButtonId != it) sysGroup.check(it) }
     }

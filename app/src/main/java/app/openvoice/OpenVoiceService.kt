@@ -14,6 +14,7 @@ import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
+import java.util.concurrent.Executors
 import android.app.KeyguardManager
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -45,6 +46,10 @@ class OpenVoiceService : AccessibilityService() {
     private lateinit var status: StatusOverlay
     private lateinit var engine: MacroEngine
     private var recorder: GestureRecorder? = null
+    private var planRunner: PlanRunner? = null
+    private val aiExec = Executors.newSingleThreadExecutor()
+    private var appCache: List<Pair<String, String>>? = null
+    private var appCacheAt = 0L
 
     private var dictation = false
     private var numbersOn = false
@@ -65,6 +70,7 @@ class OpenVoiceService : AccessibilityService() {
         fx = FeedbackOverlay(this)
         status = StatusOverlay(this)
         engine = MacroEngine(this)
+        if (Prefs.aiMode(this)) AiEngine.preload(this)
         try {
             getSystemService(CameraManager::class.java).registerTorchCallback(torchCb, main)
         } catch (_: Exception) {
@@ -83,6 +89,7 @@ class OpenVoiceService : AccessibilityService() {
     override fun onUnbind(intent: Intent?): Boolean {
         main.removeCallbacksAndMessages(null)
         if (::engine.isInitialized) engine.cancel()
+        planRunner?.cancel()
         recorder?.cancel()
         recorder = null
         tts?.shutdown()
@@ -247,7 +254,7 @@ class OpenVoiceService : AccessibilityService() {
     // ------------------------------------------------------------------
     // Entry point called by ListenService with the recognizer's alternatives
     // ------------------------------------------------------------------
-    fun handleSpeech(alternatives: List<String>): String {
+    fun handleSpeech(alternatives: List<String>, allowAi: Boolean = true): String {
         if (alternatives.isEmpty()) return ""
 
         if (sleeping) {
@@ -279,7 +286,8 @@ class OpenVoiceService : AccessibilityService() {
         }
 
         // custom commands win over built-in ones
-        if (!dictation) {
+        val aiOn = allowAi && !dictation && aiActive()
+        if (!dictation && !aiOn) {
             val customs = Store.commands(this)
             for (a in alternatives) {
                 val m = CustomMatcher.match(a, customs) ?: continue
@@ -291,6 +299,17 @@ class OpenVoiceService : AccessibilityService() {
         // click mode: just say the text of what you want to click
         if (clickMode && !dictation) {
             clickByVoice(alternatives)?.let { return it }
+        }
+
+        if (aiOn) {
+            // with the number badges showing, a bare number taps that badge
+            if (numbersOn) {
+                val n = CommandParser.parseNumber(cleanClickTarget(alternatives[0]).lowercase())
+                if (n != null && numbers.targets.any { it.number == n }) {
+                    return "“${alternatives[0]}” → ${execute(Command.Tap(n))}"
+                }
+            }
+            return startAi(alternatives)
         }
 
         var heard = alternatives[0]
@@ -318,6 +337,74 @@ class OpenVoiceService : AccessibilityService() {
         }
         if (clickMode && !dictation && cmd == Command.Unknown) return "“$heard” → nothing on screen to click"
         return "“$heard” → ${execute(cmd)}"
+    }
+
+    // ------------------------------------------------------------------
+    // AI mode
+    // ------------------------------------------------------------------
+    fun aiActive(): Boolean = Prefs.aiMode(this) && AiEngine.ready(this)
+
+    internal fun runCustomThen(cmd: CustomCommand, captured: String?, done: (String) -> Unit) {
+        engine.run(cmd, captured, done)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun appLabels(): List<Pair<String, String>> {
+        val now = System.currentTimeMillis()
+        appCache?.let { if (now - appCacheAt < 60_000) return it }
+        val pm = packageManager
+        val probe = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val list = pm.queryIntentActivities(probe, 0)
+            .map { it.loadLabel(pm).toString() to it.activityInfo.packageName }
+            .distinctBy { it.second }
+        appCache = list
+        appCacheAt = now
+        return list
+    }
+
+    private fun visibleTexts(): List<String> {
+        val out = LinkedHashSet<String>()
+        fun walk(n: AccessibilityNodeInfo?) {
+            if (n == null || out.size >= 120 || !n.isVisibleToUser) return
+            val t = (n.text ?: n.contentDescription)?.toString()?.trim()
+            if (!t.isNullOrEmpty() && t.length <= 40) out.add(t)
+            for (i in 0 until n.childCount) walk(n.getChild(i))
+        }
+        walk(rootInActiveWindow)
+        return out.toList()
+    }
+
+    private fun startAi(alts: List<String>): String {
+        val text = alts[0]
+        val ctx = AiContext(appLabels(), visibleTexts(), Store.commands(this).filter { it.enabled }.toList())
+        val thr = Prefs.aiThreshold(this)
+        val show = Prefs.aiShowPlan(this)
+        aiExec.execute {
+            val res = AiEngine.plan(applicationContext, text, ctx, thr)
+            main.post {
+                if (res.engineFailed) {
+                    // model problem: fall back to the normal exact-phrase pipeline
+                    val r = handleSpeech(alts, false)
+                    setStatus(r)
+                    ListenService.onHeard?.invoke(r)
+                } else if (res.error != null) {
+                    val msg = "“$text” → ${res.error}"
+                    setStatus(msg, 3500)
+                    ListenService.onHeard?.invoke(msg)
+                } else {
+                    val summary = res.steps.filter { it !is PlanStep.Pause }.joinToString(" → ") { it.label }
+                    if (res.steps.size > 1 && show) setStatus("▶ $summary", 3000)
+                    planRunner?.cancel()
+                    planRunner = PlanRunner(this).also { runner ->
+                        runner.run(res.steps, show) { r ->
+                            setStatus(if (r.startsWith("⚠")) r else "$summary · $r", 3000)
+                            ListenService.onHeard?.invoke("“$text” → $summary · $r")
+                        }
+                    }
+                }
+            }
+        }
+        return "“$text” → …"
     }
 
     private fun cleanClickTarget(raw: String): String {
@@ -491,6 +578,12 @@ class OpenVoiceService : AccessibilityService() {
         is Command.Brightness -> brightnessCmd(cmd.op, cmd.pct)
         is Command.Toggle -> systemToggle(cmd.name, cmd.state)
         is Command.Ringer -> ringer(cmd.mode)
+        is Command.OpenUri -> try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(cmd.uri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            "opening link"
+        } catch (e: Exception) {
+            "can't open link"
+        }
 
         // control
         Command.ClickModeOn -> {
@@ -519,6 +612,7 @@ class OpenVoiceService : AccessibilityService() {
             "stopped"
         }
         Command.StopMacro -> {
+            planRunner?.cancel()
             engine.cancel()
             "stopped"
         }

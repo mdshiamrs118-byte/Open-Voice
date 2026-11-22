@@ -206,6 +206,10 @@ class MainActivity : Activity() {
         }
     }
 
+    fun toggleAiMode() {
+        settings.setAiMode(!Prefs.aiMode(this))
+    }
+
     fun refreshAll() {
         home.refresh()
         settings.refresh()

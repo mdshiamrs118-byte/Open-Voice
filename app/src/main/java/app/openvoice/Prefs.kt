@@ -10,6 +10,10 @@ object Prefs {
     const val KEY_GRID = "grid_mode"
     const val KEY_ANIM = "animations"
     const val KEY_SYS_MODE = "system_mode"
+    const val KEY_AI_MODE = "ai_mode"
+    const val KEY_AI_PLAN = "ai_show_plan"
+    private const val KEY_AI_MODEL = "ai_model"
+    private const val KEY_AI_SENS = "ai_sensitivity"
     private const val KEY_DISABLED = "disabled_builtins"
 
     private fun sp(c: Context) = c.getSharedPreferences("open_voice", Context.MODE_PRIVATE)
@@ -35,6 +39,21 @@ object Prefs {
     }
 
     fun setSysMode(c: Context, m: Mode) = sp(c).edit().putString(KEY_SYS_MODE, m.name).apply()
+
+    /** Assistant mode: false = Normal (exact phrases), true = AI (understands everyday wording, multi-step). */
+    fun aiMode(c: Context) = get(c, KEY_AI_MODE, false)
+    fun aiShowPlan(c: Context) = get(c, KEY_AI_PLAN, true)
+    fun aiModel(c: Context): String = sp(c).getString(KEY_AI_MODEL, "") ?: ""
+    fun setAiModel(c: Context, id: String) = sp(c).edit().putString(KEY_AI_MODEL, id).apply()
+
+    /** 0 = strict, 1 = balanced, 2 = loose */
+    fun aiSensitivity(c: Context): Int = sp(c).getInt(KEY_AI_SENS, 1)
+    fun setAiSensitivity(c: Context, v: Int) = sp(c).edit().putInt(KEY_AI_SENS, v).apply()
+    fun aiThreshold(c: Context): Float = when (aiSensitivity(c)) {
+        0 -> 0.66f
+        2 -> 0.44f
+        else -> 0.54f
+    }
 
     fun disabledBuiltIns(c: Context): Set<String> =
         HashSet(sp(c).getStringSet(KEY_DISABLED, emptySet()) ?: emptySet())

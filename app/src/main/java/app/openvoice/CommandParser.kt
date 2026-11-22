@@ -60,6 +60,7 @@ sealed class Command {
     data class Brightness(val op: String, val pct: Int = 0) : Command()
     data class Toggle(val name: String, val state: Boolean?) : Command()
     data class Ringer(val mode: String) : Command()
+    data class OpenUri(val uri: String) : Command()
     data class OpenApp(val name: String) : Command()
     object VolumeUp : Command()
     object VolumeDown : Command()

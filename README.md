@@ -32,6 +32,27 @@ Accessibility Service API.
 | `pause listening` / `resume listening` | Ignore everything except the wake phrase |
 | `show commands`, `stop listening` | Help / stop |
 
+## AI mode
+
+*Settings → Assistant mode* switches between **Normal** (exact phrases from the Commands tab) and
+**AI**. AI mode uses a tiny on-device text-embedding model, not a chatbot: it only matches what you
+say to the closest command, so everyday wording works (“it's too dark”, “I can't hear it”, “take me
+back”). It also splits one sentence into several steps and runs them in order:
+
+- “open Chrome **and then** scroll down” · “turn off Wi‑Fi, Bluetooth **and** airplane mode”
+- “search for funny cats on YouTube” (opens the app, taps search, types, presses enter)
+- Arguments are picked out by rules: app names from your installed apps, button text from the screen,
+  numbers for volume and brightness.
+- Your custom commands are matched by meaning too (their name and trigger phrases), and `{text}`
+  commands still work by pattern.
+- *AI sensitivity* (Strict / Balanced / Loose) controls how sure it must be before acting.
+- Disabled commands stay disabled, and “stop macro” cancels a running plan.
+
+**Models** (*Settings → Manage AI models*): download, switch and delete small English embedding models
+(about 17–35 MB each) from Hugging Face: bge-micro, MiniLM L6 / L12, multi-qa MiniLM, GTE small, BGE
+small, E5 small. You can also add any compatible ONNX model by repo id. Everything runs offline once
+downloaded; the first start of a model builds a small index and caches it.
+
 ## App layout
 
 A bottom bar with three icons:

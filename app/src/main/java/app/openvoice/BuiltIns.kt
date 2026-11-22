@@ -98,7 +98,7 @@ fun Command.groupId(): String = when (this) {
     Command.SelectAll, Command.Copy, Command.Paste, Command.Cut -> "edit"
     Command.NewLine, Command.Enter -> "newline_enter"
     Command.DictationOn, Command.DictationOff -> "dictation"
-    is Command.OpenApp -> "open_app"
+    is Command.OpenApp, is Command.OpenUri -> "open_app"
     Command.VolumeUp, Command.VolumeDown -> "volume_step"
     Command.Mute, Command.Unmute -> "mute"
     is Command.Volume -> "volume_set"

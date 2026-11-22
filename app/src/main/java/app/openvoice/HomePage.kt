@@ -20,6 +20,7 @@ class HomePage(private val a: MainActivity) {
     private val lastCard: LinearLayout
     private val lastText: TextView
     private val setupBox: LinearLayout
+    private val modeChip: TextView
     private var setupKey = ""
     private val dim = 0xAAFFFFFF.toInt()
 
@@ -38,6 +39,23 @@ class HomePage(private val a: MainActivity) {
         col.addView(status)
         hint = Ui.label(a, "", 13f, top = 6, color = dim).apply { gravity = Gravity.CENTER }
         col.addView(hint)
+
+        modeChip = Ui.label(a, "", 13f, bold = true, top = 14).apply {
+            gravity = Gravity.CENTER
+            setPadding(Ui.dp(a, 16), Ui.dp(a, 8), Ui.dp(a, 16), Ui.dp(a, 8))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xFF111111.toInt())
+                setStroke(Ui.dp(a, 1), 0x66FFFFFF)
+                cornerRadius = Ui.dp(a, 20).toFloat()
+            }
+            layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
+                topMargin = Ui.dp(a, 14)
+                gravity = Gravity.CENTER_HORIZONTAL
+            }
+            setOnClickListener { a.toggleAiMode() }
+            Anim.press(this)
+        }
+        col.addView(modeChip)
 
         setupBox = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
         col.addView(setupBox)
@@ -69,6 +87,9 @@ class HomePage(private val a: MainActivity) {
             listening -> "Tap the orb to turn off · the notification has a button too"
             else -> "Tap the orb to turn listening back on"
         }
+
+        val aiOn = Prefs.aiMode(a) && AiEngine.ready(a)
+        modeChip.text = if (aiOn) "✦ AI mode · ${AiEngine.activeModel(a)?.title ?: ""}" else "Normal mode · tap to switch"
 
         val needA11y = OpenVoiceService.instance == null
         val needMic = !a.hasMic()
