@@ -151,6 +151,7 @@ class ListenService : Service() {
         handler.removeCallbacksAndMessages(null)
         unmuteBeep()
         OpenVoiceService.instance?.hideStatus()
+        OpenVoiceService.instance?.clearOverlays()
         recognizer?.destroy()
         recognizer = null
         onState?.invoke()
@@ -166,6 +167,7 @@ class ListenService : Service() {
             recognizer = null
             unmuteBeep()
             OpenVoiceService.instance?.hideStatus()
+            OpenVoiceService.instance?.clearOverlays()
         } else {
             errorStreak = 0
             OpenVoiceService.instance?.settle()

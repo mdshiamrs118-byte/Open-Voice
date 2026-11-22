@@ -17,6 +17,7 @@ Accessibility Service API.
 | `set grid big` / `medium` / `small` | Big 3×5 → 3×3 → 3×3 → click · Medium 9×15 → 3×3 → click · Small 27×45 → click |
 | `undo` (while the grid shows) | Go back one grid step |
 | `cancel` | Hide numbers and grid |
+| `click mode on` / `stop clicking` | While on, just say the text of a button or link (or its number) and it is clicked. No “click” or “tap” needed. Other commands still work when nothing on screen matches |
 | `scroll down/up/left/right`, `scroll to top/bottom` | Scroll |
 | `swipe left/right/up/down`, `refresh` | Swipe gestures |
 | `go back`, `go home`, `recents`, `notifications`, `quick settings` | Navigation |

@@ -49,6 +49,7 @@ class OpenVoiceService : AccessibilityService() {
     private var dictation = false
     private var numbersOn = false
     private var sleeping = false
+    private var clickMode = false
 
     private val audio by lazy { getSystemService(AudioManager::class.java) }
 
@@ -110,6 +111,7 @@ class OpenVoiceService : AccessibilityService() {
         sleeping -> "⏸ Paused · say “resume listening”"
         dictation -> "✎ Dictating · say “stop dictation”"
         grid.active -> "▦ ${grid.levelText()}"
+        clickMode -> "👆 Click mode · say what to click · “stop clicking” to exit"
         else -> "● Listening"
     }
 
@@ -148,6 +150,16 @@ class OpenVoiceService : AccessibilityService() {
 
     fun onPartial(text: String) {
         if (barEnabled()) showBar("“$text”")
+    }
+
+    /** Removes the numbers and grid overlays (used when listening stops or is turned off). */
+    fun clearOverlays() {
+        numbersOn = false
+        main.removeCallbacks(refreshNumbers)
+        if (::numbers.isInitialized) {
+            numbers.hide()
+            grid.hide()
+        }
     }
 
     fun hideStatus() {
@@ -246,6 +258,12 @@ class OpenVoiceService : AccessibilityService() {
             return ""
         }
 
+        // click mode: the exit phrase is always honoured
+        if (clickMode && alternatives.any { CommandParser.parse(it) == Command.ClickModeOff }) {
+            clickMode = false
+            return "“stop clicking” → click mode off"
+        }
+
         if (grid.active) {
             if (alternatives.any {
                     val t = it.trim().lowercase().trimEnd('.', '!', '?')
@@ -268,6 +286,11 @@ class OpenVoiceService : AccessibilityService() {
                 runCustom(m.command, m.captured)
                 return "“$a” → ▶ ${m.command.name}"
             }
+        }
+
+        // click mode: just say the text of what you want to click
+        if (clickMode && !dictation) {
+            clickByVoice(alternatives)?.let { return it }
         }
 
         var heard = alternatives[0]
@@ -293,7 +316,39 @@ class OpenVoiceService : AccessibilityService() {
                 cmd = Command.TypeText(heard)
             }
         }
+        if (clickMode && !dictation && cmd == Command.Unknown) return "“$heard” → nothing on screen to click"
         return "“$heard” → ${execute(cmd)}"
+    }
+
+    private fun cleanClickTarget(raw: String): String {
+        var t = raw.trim().trimEnd('.', '!', '?', ',')
+        val prefixes = listOf("click ", "tap ", "press ", "select ", "touch ", "on ", "the ", "this ", "that ")
+        var changed = true
+        while (changed) {
+            changed = false
+            for (p in prefixes) {
+                if (t.length > p.length && t.startsWith(p, ignoreCase = true)) {
+                    t = t.substring(p.length).trim()
+                    changed = true
+                }
+            }
+        }
+        return t
+    }
+
+    /** In click mode: a spoken number taps that badge, spoken text taps the matching element on screen. */
+    private fun clickByVoice(alternatives: List<String>): String? {
+        for (a in alternatives) {
+            val t = cleanClickTarget(a)
+            if (t.isEmpty()) continue
+            val n = CommandParser.parseNumber(t.lowercase())
+            if (numbersOn && n != null && numbers.targets.any { it.number == n }) {
+                return "“$a” → ${execute(Command.Tap(n))}"
+            }
+            val root = rootInActiveWindow ?: continue
+            if (findVisible(root, t).isNotEmpty()) return "“$a” → ${clickText(t)}"
+        }
+        return null
     }
 
     private fun parseEnabled(text: String): Command {
@@ -416,6 +471,7 @@ class OpenVoiceService : AccessibilityService() {
         Command.NewLine -> onFocused { setText(it, currentText(it) + "\n") }
         Command.Enter -> pressEnter()
         Command.DictationOn -> {
+            clickMode = false
             dictation = true
             "dictation on"
         }
@@ -437,6 +493,15 @@ class OpenVoiceService : AccessibilityService() {
         is Command.Ringer -> ringer(cmd.mode)
 
         // control
+        Command.ClickModeOn -> {
+            dictation = false
+            clickMode = true
+            "click mode on · just say what to click"
+        }
+        Command.ClickModeOff -> {
+            clickMode = false
+            "click mode off"
+        }
         Command.Sleep -> {
             sleeping = true
             "paused"
@@ -449,6 +514,7 @@ class OpenVoiceService : AccessibilityService() {
             "opening list"
         }
         Command.StopListening -> {
+            clearOverlays()
             ListenService.stop(this)
             "stopped"
         }
@@ -484,9 +550,10 @@ class OpenVoiceService : AccessibilityService() {
             if (n !in 1..max) return "no cell $n (1–$max)"
             val p = grid.pick(n)
             if (p != null) {
-                grid.hide()
                 fxTap(p.x, p.y)
-                return if (tapRaw(p.x, p.y)) "clicked" else "failed"
+                val ok = tapRaw(p.x, p.y)
+                grid.show(Prefs.gridMode(this)) // stays on screen, back at the first step
+                return if (ok) "clicked" else "failed"
             }
         }
         return grid.levelText()
@@ -504,8 +571,9 @@ class OpenVoiceService : AccessibilityService() {
         if (!grid.active) return "say “show grid” first"
         val x = grid.centerX()
         val y = grid.centerY()
-        grid.hide()
-        return done(block(x, y))
+        val ok = block(x, y)
+        grid.show(Prefs.gridMode(this)) // stays on screen, back at the first step
+        return done(ok)
     }
 
     // ------------------------------------------------------------------

@@ -71,6 +71,8 @@ sealed class Command {
     object Wake : Command()
     object ShowCommands : Command()
     object StopListening : Command()
+    object ClickModeOn : Command()
+    object ClickModeOff : Command()
     object StopMacro : Command()
     data class RunCustom(val name: String) : Command()
     object Unknown : Command()
@@ -222,6 +224,14 @@ object CommandParser {
         add(Command.Wake, "resume listening", "wake up", "start listening")
         add(Command.ShowCommands, "show commands", "what can i say")
         add(Command.StopListening, "stop listening", "stop voice")
+        add(
+            Command.ClickModeOn, "click mode", "click mode on", "start clicking", "auto click",
+            "auto click mode", "tap mode", "tap mode on", "direct click", "click by name", "turn on click mode"
+        )
+        add(
+            Command.ClickModeOff, "click mode off", "stop clicking", "exit click mode", "end click mode",
+            "tap mode off", "turn off click mode"
+        )
         add(Command.StopMacro, "stop macro", "stop running", "stop command")
     }
 

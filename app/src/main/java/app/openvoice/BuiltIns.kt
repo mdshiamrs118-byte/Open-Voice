@@ -39,6 +39,7 @@ object BuiltIns {
         Group("grid", "Grid", TARGET, "show grid · 1-135 · set grid big / medium / small · undo"),
         Group("tap_here", "Tap in grid", TARGET, "tap · double tap · hold"),
         Group("cancel", "Cancel overlays", TARGET, "cancel · hide all"),
+        Group("click_mode", "Click mode", TARGET, "click mode on · stop clicking — then just say the text to click"),
 
         Group("type", "Type text", TEXT, "type <text> · write <text>"),
         Group("dictation", "Dictation", TEXT, "start dictation · stop dictation"),
@@ -107,6 +108,7 @@ fun Command.groupId(): String = when (this) {
     Command.Sleep, Command.Wake -> "pause_resume"
     Command.ShowCommands -> "show_commands"
     Command.StopListening -> "stop_listening"
+    Command.ClickModeOn, Command.ClickModeOff -> "click_mode"
     Command.StopMacro -> "stop_macro"
     is Command.RunCustom -> "run_custom"
     Command.Unknown -> ""
