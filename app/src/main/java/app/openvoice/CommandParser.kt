@@ -66,6 +66,8 @@ sealed class Command {
     object Wake : Command()
     object ShowCommands : Command()
     object StopListening : Command()
+    object StopMacro : Command()
+    data class RunCustom(val name: String) : Command()
     object Unknown : Command()
 }
 
@@ -164,6 +166,7 @@ object CommandParser {
         add(Command.Wake, "resume listening", "wake up", "start listening")
         add(Command.ShowCommands, "show commands", "what can i say")
         add(Command.StopListening, "stop listening", "stop voice")
+        add(Command.StopMacro, "stop macro", "stop running", "stop command")
     }
 
     private val tapVerbs = listOf("tap ", "click ", "press ", "select ", "touch ")
@@ -200,6 +203,10 @@ object CommandParser {
                 val name = t.removePrefix(v).trim()
                 if (name.isNotEmpty()) return Command.OpenApp(name)
             }
+        }
+        if (t.startsWith("run ")) {
+            val name = t.removePrefix("run ").trim()
+            if (name.isNotEmpty()) return Command.RunCustom(name)
         }
         for (v in listOf("type ", "write ")) {
             if (t.startsWith(v)) {

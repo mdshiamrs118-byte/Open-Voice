@@ -28,11 +28,42 @@ Accessibility Service API.
 
 ## Overlays
 
-- **Top bar**: shows live speech, the result of each command, and the current mode
-  (listening, dictating, grid, paused).
+- **Top bar**: appears only after Open Voice hears something, shows what it heard and the result
+  (for example `“scroll down” → done`), then disappears.
 - **Tap & swipe indicators**: ripples where it taps, a ring for long-press, arrows for swipes.
 
 Both can be switched off in the app.
+
+## Custom commands
+
+Open the app → **Custom commands**.
+
+- **Trigger phrases**: as many as you like. End one with `{text}` to capture words, e.g.
+  `search for {text}` → open URL `https://www.google.com/search?q={text}`.
+- **Actions** (any number, reorderable): tap / double tap / long press / swipe at a screen
+  position (in %), play a recorded gesture, click text, wait, open app, open link, press a key or
+  system action, type text, scroll, run a built-in command, shell command, run another custom
+  command, show a message.
+- **Repeat** the whole sequence up to 99 times; optionally keep going when an action fails.
+- **Run with**: *Normal* (accessibility), *Root* (`su`) or *Shizuku*. Root and Shizuku send taps,
+  swipes and key presses as shell `input` commands and unlock the **Shell command** action.
+  Multi-finger gestures only replay faithfully in Normal mode.
+- **Shortcut triggering**: add a pinned home-screen shortcut for any command, or fire one from
+  other apps (turn on *Allow other apps to trigger commands*):
+  `adb shell am start -a app.openvoice.action.RUN_COMMAND --es name "My command" --es text "hello"`
+- `run <name>` runs a command by name; `stop macro` cancels the running one.
+- **Export / Import** via the clipboard (commands and the gestures they use).
+
+## Gestures
+
+Open the app → **Gestures** → **Record new gesture**. After a 5 second countdown you draw over
+whatever app is on screen (several strokes, several fingers). Recorded gestures are stored as
+screen fractions, so they work on any resolution, and can be used as an action.
+
+## Root and Shizuku
+
+- **Root**: tap *Test root access* once and approve the prompt from your root manager.
+- **Shizuku**: install and start Shizuku, then tap *Grant Shizuku permission*.
 
 ## Build
 
@@ -61,6 +92,8 @@ Output: `app/build/outputs/apk/debug/app-debug.apk`
 - `OpenVoiceService`: the AccessibilityService. Reads the UI tree, performs clicks, scrolls, text
   input, gestures and global actions.
 - `NumberOverlay`: draws numbered badges in an accessibility overlay window.
+- `MacroEngine`: runs custom-command actions in Normal / Root / Shizuku mode.
+- `GestureRecorder`: overlay that records multi-touch gestures.
 - `ListenService`: foreground service running Android's `SpeechRecognizer` in a loop
   (offline preferred when a language pack is installed).
 - `CommandParser`: turns recognised phrases into `Command`s.
@@ -68,7 +101,6 @@ Output: `app/build/outputs/apk/debug/app-debug.apk`
 ## Roadmap
 
 - Offline recognition with Vosk and a restricted command grammar
-- Coordinate grid for apps with poor accessibility trees
 - Fuzzy matching for `click <text>`
 - Settings screen, custom commands, language selection
 - Wake word / pause-resume

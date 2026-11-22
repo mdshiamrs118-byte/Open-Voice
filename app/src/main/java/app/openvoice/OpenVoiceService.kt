@@ -10,8 +10,11 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Toast
+import kotlin.math.abs
 
 class OpenVoiceService : AccessibilityService() {
 
@@ -25,6 +28,8 @@ class OpenVoiceService : AccessibilityService() {
     private lateinit var grid: GridOverlay
     private lateinit var fx: FeedbackOverlay
     private lateinit var status: StatusOverlay
+    private lateinit var engine: MacroEngine
+    private var recorder: GestureRecorder? = null
 
     private var dictation = false
     private var numbersOn = false
@@ -35,7 +40,7 @@ class OpenVoiceService : AccessibilityService() {
     private val refreshNumbers = Runnable {
         if (numbersOn) numbers.update(rootInActiveWindow)
     }
-    private val revertStatus = Runnable { showIdle() }
+    private val hideRunnable = Runnable { hideStatus() }
 
     override fun onServiceConnected() {
         instance = this
@@ -43,6 +48,7 @@ class OpenVoiceService : AccessibilityService() {
         grid = GridOverlay(this)
         fx = FeedbackOverlay(this)
         status = StatusOverlay(this)
+        engine = MacroEngine(this)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -56,6 +62,9 @@ class OpenVoiceService : AccessibilityService() {
 
     override fun onUnbind(intent: Intent?): Boolean {
         main.removeCallbacksAndMessages(null)
+        if (::engine.isInitialized) engine.cancel()
+        recorder?.cancel()
+        recorder = null
         if (::numbers.isInitialized) {
             numbers.hide()
             grid.hide()
@@ -67,42 +76,99 @@ class OpenVoiceService : AccessibilityService() {
     }
 
     // ------------------------------------------------------------------
-    // Top status pill (called by ListenService)
+    // Top bar: shown only after something was heard / done
     // ------------------------------------------------------------------
-    fun idleText(): String = when {
-        sleeping -> "⏸ Paused · say “resume listening”"
-        dictation -> "✎ Dictating · say “stop dictation”"
-        grid.active -> "▦ Grid · say 1–9, then “tap”"
-        else -> "● Listening"
-    }
-
-    fun setStatus(text: String, holdMs: Long = 0) {
+    fun setStatus(text: String, holdMs: Long = 2500) {
         if (!::status.isInitialized) return
-        main.removeCallbacks(revertStatus)
+        main.removeCallbacks(hideRunnable)
         if (!Prefs.statusBar(this)) {
             status.hide()
             return
         }
         status.show(text)
-        if (holdMs > 0) main.postDelayed(revertStatus, holdMs)
+        main.postDelayed(hideRunnable, holdMs)
     }
 
-    fun showIdle() = setStatus(idleText())
-
     fun hideStatus() {
-        main.removeCallbacks(revertStatus)
+        main.removeCallbacks(hideRunnable)
         if (::status.isInitialized) status.hide()
     }
 
     // ------------------------------------------------------------------
-    // Visual feedback helpers
+    // Visual feedback helpers (internal: also used by MacroEngine)
     // ------------------------------------------------------------------
     private fun fxOn() = Prefs.gestureFx(this)
-    private fun fxTap(x: Float, y: Float) { if (fxOn()) fx.tap(x, y) }
-    private fun fxDouble(x: Float, y: Float) { if (fxOn()) fx.doubleTap(x, y) }
-    private fun fxLong(x: Float, y: Float) { if (fxOn()) fx.longPress(x, y) }
-    private fun fxSwipe(x1: Float, y1: Float, x2: Float, y2: Float) {
+    internal fun fxTap(x: Float, y: Float) { if (fxOn()) fx.tap(x, y) }
+    internal fun fxDouble(x: Float, y: Float) { if (fxOn()) fx.doubleTap(x, y) }
+    internal fun fxLong(x: Float, y: Float) { if (fxOn()) fx.longPress(x, y) }
+    internal fun fxSwipe(x1: Float, y1: Float, x2: Float, y2: Float) {
         if (fxOn()) fx.swipe(x1, y1, x2, y2)
+    }
+
+    // ------------------------------------------------------------------
+    // Custom commands
+    // ------------------------------------------------------------------
+    fun runCustom(cmd: CustomCommand, captured: String?, delayMs: Long = 0) {
+        val go = Runnable {
+            engine.run(cmd, captured) { res -> setStatus("${cmd.name}: $res") }
+        }
+        if (delayMs > 0) main.postDelayed(go, delayMs) else go.run()
+    }
+
+    fun startRecorder() {
+        recorder?.cancel()
+        recorder = GestureRecorder(this) { g ->
+            recorder = null
+            if (g != null) {
+                g.name = "Gesture ${Store.gestures(this).size + 1}"
+                Store.addGesture(this, g)
+                Toast.makeText(this, "Saved “${g.name}”", Toast.LENGTH_SHORT).show()
+            }
+            startActivity(Intent(this, GesturesActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.also { it.start() }
+    }
+
+    fun playGestureAfter(g: Gesture, delayMs: Long) {
+        main.postDelayed({ playGesture(g) }, delayMs)
+    }
+
+    /** Replays a recorded gesture (multi-stroke, multi-finger) with the accessibility API. */
+    internal fun playGesture(g: Gesture): Boolean {
+        val (w, h) = Screen.size(this)
+        val maxDur = GestureDescription.getMaxGestureDuration()
+        val maxStrokes = GestureDescription.getMaxStrokeCount()
+        val b = GestureDescription.Builder()
+        var n = 0
+        for (s in g.strokes) {
+            if (n >= maxStrokes || s.points.isEmpty()) continue
+            val start = s.startMs.coerceIn(0L, maxDur - 100)
+            val dur = s.durMs.coerceIn(50L, maxDur - start)
+            val first = s.points.first()
+            val last = s.points.last()
+            val moved = s.points.any { abs(it.x - first.x) * w > 12 || abs(it.y - first.y) * h > 12 }
+            val p = Path()
+            p.moveTo(first.x * w, first.y * h)
+            if (moved) s.points.drop(1).forEach { p.lineTo(it.x * w, it.y * h) }
+            try {
+                b.addStroke(GestureDescription.StrokeDescription(p, start, dur))
+            } catch (e: Exception) {
+                continue
+            }
+            n++
+            val fx1 = first.x * w
+            val fy1 = first.y * h
+            val lx = last.x * w
+            val ly = last.y * h
+            main.postDelayed({
+                when {
+                    moved -> fxSwipe(fx1, fy1, lx, ly)
+                    dur > 400 -> fxLong(fx1, fy1)
+                    else -> fxTap(fx1, fy1)
+                }
+            }, start)
+        }
+        if (n == 0) return false
+        return dispatchGesture(b.build(), null, null)
     }
 
     // ------------------------------------------------------------------
@@ -123,6 +189,16 @@ class OpenVoiceService : AccessibilityService() {
             for (a in alternatives) {
                 val picks = CommandParser.parseGridPicks(a) ?: continue
                 return "“$a” → ${execute(Command.GridPick(picks))}"
+            }
+        }
+
+        // custom commands win over built-in ones
+        if (!dictation) {
+            val customs = Store.commands(this)
+            for (a in alternatives) {
+                val m = CustomMatcher.match(a, customs) ?: continue
+                runCustom(m.command, m.captured)
+                return "“$a” → ▶ ${m.command.name}"
             }
         }
 
@@ -153,6 +229,9 @@ class OpenVoiceService : AccessibilityService() {
     }
 
     private fun done(ok: Boolean) = if (ok) "done" else "failed"
+
+    /** Runs one built-in command and returns a short result. */
+    fun exec(cmd: Command): String = execute(cmd)
 
     private fun execute(cmd: Command): String = when (cmd) {
         // navigation
@@ -188,9 +267,8 @@ class OpenVoiceService : AccessibilityService() {
         Command.SwipeUp -> swipeVertical(true)
         Command.SwipeDown -> swipeVertical(false)
         Command.Refresh -> {
-            val w = screenW()
-            val h = screenH()
-            done(swipe(w / 2, h * 0.3f, w / 2, h * 0.8f, 500))
+            val (w, h) = Screen.size(this)
+            done(swipe(w / 2f, h * 0.3f, w / 2f, h * 0.8f, 500))
         }
 
         // numbers
@@ -295,6 +373,18 @@ class OpenVoiceService : AccessibilityService() {
             ListenService.stop(this)
             "stopped"
         }
+        Command.StopMacro -> {
+            engine.cancel()
+            "stopped"
+        }
+        is Command.RunCustom -> {
+            val c = Store.findCommandByName(this, cmd.name)
+            if (c == null) "no command “${cmd.name}”"
+            else {
+                runCustom(c, null)
+                "running ${c.name}"
+            }
+        }
         Command.Unknown -> "didn't understand"
     }
 
@@ -357,9 +447,6 @@ class OpenVoiceService : AccessibilityService() {
     // ------------------------------------------------------------------
     // Scrolling / swiping
     // ------------------------------------------------------------------
-    private fun screenW() = resources.displayMetrics.widthPixels.toFloat()
-    private fun screenH() = resources.displayMetrics.heightPixels.toFloat()
-
     private fun scrollOnce(forward: Boolean, allowGesture: Boolean = true): Boolean {
         val node = rootInActiveWindow?.let { findLargestScrollable(it, null) }
         if (node != null) {
@@ -376,10 +463,9 @@ class OpenVoiceService : AccessibilityService() {
             }
             if (!allowGesture) return false
         }
-        val w = screenW()
-        val h = screenH()
-        return if (forward) swipe(w / 2, h * 0.7f, w / 2, h * 0.3f)
-        else swipe(w / 2, h * 0.3f, w / 2, h * 0.7f)
+        val (w, h) = Screen.size(this)
+        return if (forward) swipe(w / 2f, h * 0.7f, w / 2f, h * 0.3f)
+        else swipe(w / 2f, h * 0.3f, w / 2f, h * 0.7f)
     }
 
     private fun scrollRepeat(forward: Boolean, times: Int = 15) {
@@ -434,21 +520,19 @@ class OpenVoiceService : AccessibilityService() {
 
     /** fingerLeft = true: finger moves right-to-left. */
     private fun swipeHorizontal(fingerLeft: Boolean): String {
-        val w = screenW()
-        val h = screenH()
+        val (w, h) = Screen.size(this)
         return done(
-            if (fingerLeft) swipe(w * 0.8f, h / 2, w * 0.2f, h / 2)
-            else swipe(w * 0.2f, h / 2, w * 0.8f, h / 2)
+            if (fingerLeft) swipe(w * 0.8f, h / 2f, w * 0.2f, h / 2f)
+            else swipe(w * 0.2f, h / 2f, w * 0.8f, h / 2f)
         )
     }
 
     /** fingerUp = true: finger moves bottom-to-top. */
     private fun swipeVertical(fingerUp: Boolean): String {
-        val w = screenW()
-        val h = screenH()
+        val (w, h) = Screen.size(this)
         return done(
-            if (fingerUp) swipe(w / 2, h * 0.7f, w / 2, h * 0.3f)
-            else swipe(w / 2, h * 0.3f, w / 2, h * 0.7f)
+            if (fingerUp) swipe(w / 2f, h * 0.7f, w / 2f, h * 0.3f)
+            else swipe(w / 2f, h * 0.3f, w / 2f, h * 0.7f)
         )
     }
 
@@ -458,22 +542,22 @@ class OpenVoiceService : AccessibilityService() {
     private fun point(x: Float, y: Float, start: Long, dur: Long) =
         GestureDescription.StrokeDescription(Path().apply { moveTo(x, y) }, start, dur)
 
-    private fun tapRaw(x: Float, y: Float): Boolean = dispatchGesture(
+    internal fun tapRaw(x: Float, y: Float): Boolean = dispatchGesture(
         GestureDescription.Builder().addStroke(point(x, y, 0, 50)).build(), null, null
     )
 
-    private fun doubleTapRaw(x: Float, y: Float): Boolean = dispatchGesture(
+    internal fun doubleTapRaw(x: Float, y: Float): Boolean = dispatchGesture(
         GestureDescription.Builder()
             .addStroke(point(x, y, 0, 50))
             .addStroke(point(x, y, 150, 50))
             .build(), null, null
     )
 
-    private fun longPressRaw(x: Float, y: Float): Boolean = dispatchGesture(
-        GestureDescription.Builder().addStroke(point(x, y, 0, 900)).build(), null, null
+    internal fun longPressRaw(x: Float, y: Float, ms: Long = 900): Boolean = dispatchGesture(
+        GestureDescription.Builder().addStroke(point(x, y, 0, ms)).build(), null, null
     )
 
-    private fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, ms: Long = 300): Boolean {
+    internal fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, ms: Long = 300): Boolean {
         fxSwipe(x1, y1, x2, y2)
         val p = Path().apply {
             moveTo(x1, y1)
@@ -572,19 +656,30 @@ class OpenVoiceService : AccessibilityService() {
         }
     }
 
+    internal fun mediaKey(code: Int): Boolean = try {
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+        true
+    } catch (e: Exception) {
+        false
+    }
+
     @Suppress("DEPRECATION")
-    private fun openApp(name: String): String {
+    internal fun findPackage(name: String): String? {
         val pm = packageManager
         val probe = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val apps = pm.queryIntentActivities(probe, 0)
         val q = name.lowercase()
         val match = apps.firstOrNull { it.loadLabel(pm).toString().lowercase() == q }
             ?: apps.firstOrNull { it.loadLabel(pm).toString().lowercase().contains(q) }
-            ?: return "app “$name” not found"
-        val launch = pm.getLaunchIntentForPackage(match.activityInfo.packageName)
-            ?: return "can't launch"
+        return match?.activityInfo?.packageName
+    }
+
+    private fun openApp(name: String): String {
+        val pkg = findPackage(name) ?: return "app “$name” not found"
+        val launch = packageManager.getLaunchIntentForPackage(pkg) ?: return "can't launch"
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         startActivity(launch)
-        return "opening ${match.loadLabel(pm)}"
+        return "opening $name"
     }
 }
