@@ -43,10 +43,6 @@ class TranslationPreferences(
     /** Which speaker of a multi-speaker neural voice to use. */
     val ttsSpeaker: Preference<Int> = preferenceStore.getInt("pref_read_aloud_speaker", -1)
 
-    val ttsContinuous: Preference<Boolean> = preferenceStore.getBoolean("pref_read_aloud_continuous", false)
-
-    val ttsFollow: Preference<Boolean> = preferenceStore.getBoolean("pref_read_aloud_follow", false)
-
     val ttsSpeechRate: Preference<Int> = preferenceStore.getInt("pref_read_aloud_rate", 100)
 
     fun online() = OnlineConfig(apiBaseUrl.get(), apiKey.get(), apiModel.get())

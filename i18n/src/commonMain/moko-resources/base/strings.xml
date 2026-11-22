@@ -1158,10 +1158,6 @@
     <string name="pref_read_aloud_offline_voices">Offline voices</string>
     <string name="pref_read_aloud_offline_voices_summary">Natural-sounding voices that run on your phone. Download one, then pick it as the speech engine. Text in a language the voice cannot read uses the system engine instead. Tap a downloaded voice to delete it.</string>
     <string name="pref_read_aloud_voice_ready">Downloaded</string>
-    <string name="pref_read_aloud_continuous">Continuous read</string>
-    <string name="pref_read_aloud_continuous_summary">After a text box is read, read the next one on screen. Starts when you tap text and stops when you tap empty space</string>
-    <string name="pref_read_aloud_follow">Follow read</string>
-    <string name="pref_read_aloud_follow_summary">Scroll or turn the page to bring the next text into view while reading. Needs Continuous read</string>
     <string name="pref_read_aloud_test">Test voice</string>
     <string name="pref_read_aloud_test_sentence">This is how the translated text will sound.</string>
 </resources>

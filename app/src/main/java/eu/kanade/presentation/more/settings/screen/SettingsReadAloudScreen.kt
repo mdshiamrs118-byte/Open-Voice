@@ -69,16 +69,6 @@ data object SettingsReadAloudScreen : SearchableSettings {
                         valueText = { stringResource(MR.strings.pref_read_aloud_percent, it) },
                         valueRange = 50..200 step 10,
                     ),
-                    Preference.PreferenceItem.SwitchPreference(
-                        preference = prefs.ttsContinuous,
-                        title = stringResource(MR.strings.pref_read_aloud_continuous),
-                        subtitle = stringResource(MR.strings.pref_read_aloud_continuous_summary),
-                    ),
-                    Preference.PreferenceItem.SwitchPreference(
-                        preference = prefs.ttsFollow,
-                        title = stringResource(MR.strings.pref_read_aloud_follow),
-                        subtitle = stringResource(MR.strings.pref_read_aloud_follow_summary),
-                    ),
                     Preference.PreferenceItem.TextPreference(
                         title = stringResource(MR.strings.pref_read_aloud_test),
                         onClick = { readAloud.test(sample) },

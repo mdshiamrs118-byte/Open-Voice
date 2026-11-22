@@ -47,7 +47,6 @@ import eu.kanade.tachiyomi.util.system.animatorDurationScale
 import eu.kanade.tachiyomi.util.view.isVisibleOnScreen
 import mihon.translation.ReadAloudBoxes
 import mihon.translation.ReadAloudDisplay
-import mihon.translation.TextBox
 import okio.BufferedSource
 
 /**
@@ -297,15 +296,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
             else -> return null
         }
         rect.offset(view.left.toFloat(), view.top.toFloat())
-        return rect
-    }
-
-    /** Where [box] is on the screen. */
-    fun boxOnScreen(box: TextBox): RectF? {
-        val rect = boxToViewRect(RectF(box.left, box.top, box.right, box.bottom)) ?: return null
-        val location = IntArray(2)
-        getLocationOnScreen(location)
-        rect.offset(location[0].toFloat(), location[1].toFloat())
         return rect
     }
 
