@@ -10,6 +10,8 @@ import android.text.TextUtils
 import android.view.Gravity
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import android.widget.TextView
 
 /** Small pill at the top of the screen showing what Open Voice is hearing / doing. */
@@ -25,14 +27,23 @@ class StatusOverlay(private val service: AccessibilityService) {
         v.text = text
     }
 
-    fun hide() {
-        tv?.let {
-            try {
-                wm.removeView(it)
-            } catch (_: Exception) {
-            }
-        }
+    fun hide(animate: Boolean = true) {
+        val v = tv ?: return
         tv = null
+        if (animate && Anim.on(service)) {
+            v.animate().cancel()
+            v.animate().alpha(0f).translationY(-dp(10f).toFloat()).setDuration(170)
+                .withEndAction { remove(v) }.start()
+        } else {
+            remove(v)
+        }
+    }
+
+    private fun remove(v: TextView) {
+        try {
+            wm.removeView(v)
+        } catch (_: Exception) {
+        }
     }
 
     private fun statusBarHeight(): Int {
@@ -70,6 +81,14 @@ class StatusOverlay(private val service: AccessibilityService) {
         lp.y = statusBarHeight() + dp(6f)
         wm.addView(v, lp)
         tv = v
+        if (Anim.on(service)) {
+            v.alpha = 0f
+            v.translationY = -dp(18f).toFloat()
+            v.scaleX = 0.92f
+            v.scaleY = 0.92f
+            v.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f)
+                .setDuration(300).setInterpolator(OvershootInterpolator(1.6f)).start()
+        }
         return v
     }
 }

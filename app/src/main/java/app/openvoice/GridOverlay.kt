@@ -65,7 +65,13 @@ class GridOverlay(private val service: AccessibilityService) {
 
     private fun push() {
         val (c, r) = mode.levels[level]
-        view?.set(region, full(), c, r)
+        view?.let { v ->
+            v.set(region, full(), c, r)
+            if (Anim.on(service)) {
+                v.alpha = 0.25f
+                v.animate().alpha(1f).setDuration(220).start()
+            }
+        }
     }
 
     fun cellCount(): Int {

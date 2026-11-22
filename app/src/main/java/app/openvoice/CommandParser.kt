@@ -56,6 +56,10 @@ sealed class Command {
     object DictationOff : Command()
 
     // device / app
+    data class Volume(val stream: String, val op: String, val pct: Int = 0) : Command()
+    data class Brightness(val op: String, val pct: Int = 0) : Command()
+    data class Toggle(val name: String, val state: Boolean?) : Command()
+    data class Ringer(val mode: String) : Command()
     data class OpenApp(val name: String) : Command()
     object VolumeUp : Command()
     object VolumeDown : Command()
@@ -206,6 +210,11 @@ object CommandParser {
 
         add(Command.VolumeUp, "volume up", "louder")
         add(Command.VolumeDown, "volume down", "quieter")
+        add(Command.Brightness("up"), "brighter", "increase brightness")
+        add(Command.Brightness("down"), "dimmer", "decrease brightness")
+        add(Command.Ringer("silent"), "silent mode", "set silent mode")
+        add(Command.Ringer("vibrate"), "vibrate mode", "set vibrate mode")
+        add(Command.Ringer("normal"), "ring mode", "normal mode", "sound mode")
         add(Command.Mute, "mute", "mute volume")
         add(Command.Unmute, "unmute", "unmute volume")
 
@@ -214,6 +223,61 @@ object CommandParser {
         add(Command.ShowCommands, "show commands", "what can i say")
         add(Command.StopListening, "stop listening", "stop voice")
         add(Command.StopMacro, "stop macro", "stop running", "stop command")
+    }
+
+    private val volRe = Regex("^(?:set\\s+)?(?:(media|music|ring|ringer|alarm|notification|call|system)\\s+)?volume\\s*(?:to\\s+)?(.+)$")
+    private val briRe = Regex("^(?:set\\s+)?(?:screen\\s+)?brightness\\s*(?:to\\s+)?(.+)$")
+    private val incRe = Regex("^(increase|decrease|raise|lower|reduce|turn up|turn down)\\s+(?:the\\s+)?(volume|brightness)$")
+    private val turnOnOff = Regex("^(?:turn|switch|set)\\s+(on|off)\\s+(?:the\\s+)?(.+)$")
+    private val turnNameOnOff = Regex("^(?:turn|switch|set)\\s+(?:the\\s+)?(.+?)\\s+(on|off)$")
+    private val enableRe = Regex("^(enable|disable)\\s+(?:the\\s+)?(.+)$")
+    private val toggleRe = Regex("^toggle\\s+(?:the\\s+)?(.+)$")
+    private val nameOnOff = Regex("^(.+?)\\s+(on|off)$")
+
+    /** "up", "50 percent", "max"... -> (op, pct) */
+    private fun level(arg: String): Pair<String, Int>? {
+        val a = arg.trim().removeSuffix("percent").removeSuffix("%").trim()
+        when (a) {
+            "up", "plus", "increase", "higher", "louder", "brighter", "raise" -> return "up" to 0
+            "down", "minus", "decrease", "lower", "quieter", "dimmer", "dim", "reduce" -> return "down" to 0
+            "full", "max", "maximum", "highest", "top" -> return "max" to 0
+            "low", "min", "minimum", "lowest" -> return "min" to 0
+            "auto", "automatic" -> return "auto" to 0
+        }
+        parseNumber(a)?.let { if (it in 0..100) return "pct" to it }
+        return null
+    }
+
+    private fun parseSystem(t: String): Command? {
+        incRe.matchEntire(t)?.let { m ->
+            val up = m.groupValues[1] in listOf("increase", "raise", "turn up")
+            val op = if (up) "up" else "down"
+            return if (m.groupValues[2] == "volume") Command.Volume("media", op) else Command.Brightness(op)
+        }
+        volRe.matchEntire(t)?.let { m ->
+            val lv = level(m.groupValues[2]) ?: return@let
+            if (lv.first == "auto") return@let
+            val stream = when (m.groupValues[1]) {
+                "", "media", "music" -> "media"
+                "ring", "ringer" -> "ring"
+                else -> m.groupValues[1]
+            }
+            return Command.Volume(stream, lv.first, lv.second)
+        }
+        briRe.matchEntire(t)?.let { m ->
+            val lv = level(m.groupValues[1]) ?: return@let
+            return Command.Brightness(lv.first, lv.second)
+        }
+        turnOnOff.matchEntire(t)?.let { return Command.Toggle(SystemToggles.canon(it.groupValues[2]), it.groupValues[1] == "on") }
+        turnNameOnOff.matchEntire(t)?.let { return Command.Toggle(SystemToggles.canon(it.groupValues[1]), it.groupValues[2] == "on") }
+        enableRe.matchEntire(t)?.let { return Command.Toggle(SystemToggles.canon(it.groupValues[2]), it.groupValues[1] == "enable") }
+        toggleRe.matchEntire(t)?.let { return Command.Toggle(SystemToggles.canon(it.groupValues[1]), null) }
+        nameOnOff.matchEntire(t)?.let {
+            if (SystemToggles.known(it.groupValues[1])) {
+                return Command.Toggle(SystemToggles.canon(it.groupValues[1]), it.groupValues[2] == "on")
+            }
+        }
+        return null
     }
 
     private val tapVerbs = listOf("tap ", "click ", "press ", "select ", "touch ")
@@ -251,6 +315,7 @@ object CommandParser {
                 if (name.isNotEmpty()) return Command.OpenApp(name)
             }
         }
+        parseSystem(t)?.let { return it }
         if (t.startsWith("run ")) {
             val name = t.removePrefix("run ").trim()
             if (name.isNotEmpty()) return Command.RunCustom(name)

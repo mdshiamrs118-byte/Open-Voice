@@ -40,6 +40,10 @@ class NumberOverlay(private val service: AccessibilityService) {
             lp.gravity = Gravity.TOP or Gravity.START
             wm.addView(v, lp)
             view = v
+            if (Anim.on(service)) {
+                v.alpha = 0f
+                v.animate().alpha(1f).setDuration(220).start()
+            }
         }
         update(root)
         return targets.size

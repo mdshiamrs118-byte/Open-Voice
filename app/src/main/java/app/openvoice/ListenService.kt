@@ -20,19 +20,32 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.widget.Toast
 
-/** Foreground service that keeps the microphone open and feeds speech to OpenVoiceService. */
+/**
+ * Foreground service that keeps the microphone open and feeds speech to OpenVoiceService.
+ * The notification has a button that turns listening off and on without removing the notification.
+ */
 class ListenService : Service() {
 
     companion object {
         const val ACTION_STOP = "app.openvoice.STOP"
+        const val ACTION_TOGGLE = "app.openvoice.TOGGLE"
         private const val CHANNEL_ID = "open_voice_listening"
         private const val NOTIF_ID = 1
 
+        /** The service is alive (notification visible). */
         @Volatile
         var running = false
 
-        /** UI hook (called on the main thread). */
+        /** Listening switched off from the notification or the app, service still alive. */
+        @Volatile
+        var paused = false
+
+        val listening: Boolean get() = running && !paused
+
+        /** UI hooks (called on the main thread). */
         var onHeard: ((String) -> Unit)? = null
+        var onState: (() -> Unit)? = null
+        var onLevel: ((Float) -> Unit)? = null
 
         fun start(ctx: Context) {
             ctx.startForegroundService(Intent(ctx, ListenService::class.java))
@@ -40,6 +53,11 @@ class ListenService : Service() {
 
         fun stop(ctx: Context) {
             ctx.stopService(Intent(ctx, ListenService::class.java))
+        }
+
+        /** Turns listening off / on while keeping the notification. */
+        fun toggle(ctx: Context) {
+            ctx.startService(Intent(ctx, ListenService::class.java).setAction(ACTION_TOGGLE))
         }
     }
 
@@ -87,9 +105,15 @@ class ListenService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopSelf()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            ACTION_STOP -> {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            ACTION_TOGGLE -> {
+                if (running) setPaused(!paused) else stopSelf()
+                return START_NOT_STICKY
+            }
         }
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ||
             !SpeechRecognizer.isRecognitionAvailable(this)
@@ -114,25 +138,51 @@ class ListenService : Service() {
             return START_NOT_STICKY
         }
         running = true
+        paused = false
         OpenVoiceService.instance?.settle()
         startListening()
+        onState?.invoke()
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
         running = false
+        paused = false
         handler.removeCallbacksAndMessages(null)
         unmuteBeep()
         OpenVoiceService.instance?.hideStatus()
         recognizer?.destroy()
         recognizer = null
+        onState?.invoke()
         super.onDestroy()
+    }
+
+    private fun setPaused(p: Boolean) {
+        paused = p
+        handler.removeCallbacks(startRunnable)
+        handler.removeCallbacks(unmuteRunnable)
+        if (p) {
+            recognizer?.destroy()
+            recognizer = null
+            unmuteBeep()
+            OpenVoiceService.instance?.hideStatus()
+        } else {
+            errorStreak = 0
+            OpenVoiceService.instance?.settle()
+            startListening()
+        }
+        notifyNow(if (p) "Listening is off" else "Say “show numbers” or “scroll down”")
+        onState?.invoke()
+    }
+
+    private fun notifyNow(text: String) {
+        getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(text))
     }
 
     // ------------------------------------------------------------------
 
     private fun startListening() {
-        if (!running) return
+        if (!running || paused) return
         muteBeep() // silence the "ding" that plays when the recognizer starts
         if (recognizer == null) {
             recognizer = SpeechRecognizer.createSpeechRecognizer(this).also {
@@ -184,17 +234,22 @@ class ListenService : Service() {
             muteBeep()
         }
 
-        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onRmsChanged(rmsdB: Float) {
+            onLevel?.invoke(rmsdB)
+        }
+
         override fun onBufferReceived(buffer: ByteArray?) {}
+        override fun onEvent(eventType: Int, params: Bundle?) {}
+
         override fun onPartialResults(partialResults: Bundle?) {
             val p = partialResults
                 ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 ?.firstOrNull()
             if (!p.isNullOrBlank()) OpenVoiceService.instance?.onPartial(p)
         }
-        override fun onEvent(eventType: Int, params: Bundle?) {}
 
         override fun onError(error: Int) {
+            if (paused) return
             when (error) {
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
                     stopSelf()
@@ -221,6 +276,7 @@ class ListenService : Service() {
         }
 
         override fun onResults(results: Bundle?) {
+            if (paused) return
             errorStreak = 0
             val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
             if (list.isNotEmpty()) {
@@ -229,8 +285,7 @@ class ListenService : Service() {
                     ?: "“${list[0]}” → enable the accessibility service first"
                 if (feedback.isNotEmpty()) {
                     onHeard?.invoke(feedback)
-                    getSystemService(NotificationManager::class.java)
-                        .notify(NOTIF_ID, buildNotification(feedback))
+                    notifyNow(feedback)
                     svc?.setStatus(feedback, 2500)
                 } else {
                     svc?.settle()
@@ -248,10 +303,12 @@ class ListenService : Service() {
             val ch = NotificationChannel(CHANNEL_ID, "Listening", NotificationManager.IMPORTANCE_LOW)
             nm.createNotificationChannel(ch)
         }
+        val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         val stop = PendingIntent.getService(
-            this, 0,
-            Intent(this, ListenService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            this, 0, Intent(this, ListenService::class.java).setAction(ACTION_STOP), flags
+        )
+        val toggle = PendingIntent.getService(
+            this, 2, Intent(this, ListenService::class.java).setAction(ACTION_TOGGLE), flags
         )
         val open = PendingIntent.getActivity(
             this, 1, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
@@ -259,11 +316,13 @@ class ListenService : Service() {
         @Suppress("DEPRECATION")
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Open Voice is listening")
+            .setContentTitle(if (paused) "Open Voice · off" else "Open Voice · listening")
             .setContentText(text)
             .setContentIntent(open)
+            .addAction(0, if (paused) "Turn on" else "Turn off", toggle)
             .addAction(0, "Stop", stop)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
             .build()
     }
 }

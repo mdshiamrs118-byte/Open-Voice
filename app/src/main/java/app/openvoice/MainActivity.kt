@@ -5,176 +5,76 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.provider.Settings
+import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-import android.widget.Button
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
+import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.RadioButton
-import android.widget.RadioGroup
-import android.widget.Switch
-import android.widget.TextView
 import android.widget.Toast
 import rikka.shizuku.Shizuku
 
+/** Hosts the three tabs (Home, Commands, Settings) with an icon-only bottom bar. */
 class MainActivity : Activity() {
 
-    private lateinit var a11yText: TextView
-    private lateinit var micText: TextView
-    private lateinit var heardText: TextView
-    private lateinit var rootText: TextView
-    private lateinit var shizukuText: TextView
-    private lateinit var toggle: Button
+    private lateinit var home: HomePage
+    private lateinit var commands: CommandsPage
+    private lateinit var settings: SettingsPage
+    private lateinit var pages: List<View>
+    private lateinit var icons: List<ImageView>
+    private lateinit var navRow: LinearLayout
+    private lateinit var indicator: View
+    private var tab = 0
     private val ui = Handler(Looper.getMainLooper())
-    private lateinit var gridGroup: RadioGroup
-    private val gridIds = LinkedHashMap<GridMode, Int>()
 
     private val shizukuListener = Shizuku.OnRequestPermissionResultListener { _, _ ->
-        runOnUiThread { refresh() }
-    }
-
-    private fun switchRow(title: String, key: String, def: Boolean = true) = Switch(this).apply {
-        text = title
-        textSize = 15f
-        setTextColor(Color.WHITE)
-        isChecked = Prefs.get(this@MainActivity, key, def)
-        setOnCheckedChangeListener { _, on ->
-            Prefs.set(this@MainActivity, key, on)
-            val svc = OpenVoiceService.instance
-            when (key) {
-                Prefs.KEY_STATUS -> if (!on) svc?.hideStatus() else svc?.settle()
-                Prefs.KEY_STATUS_ALWAYS -> svc?.settle()
-            }
-        }
-        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = Ui.dp(this@MainActivity, 14) }
+        runOnUiThread { refreshAll() }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val col = Ui.screen(this)
+        window.statusBarColor = Color.BLACK
+        window.navigationBarColor = 0xFF0A0A0A.toInt()
 
-        col.addView(Ui.label(this, "Open Voice", 32f, bold = true))
-        col.addView(Ui.label(this, "Control your phone with your voice.", 15f, top = 4))
+        home = HomePage(this)
+        commands = CommandsPage(this)
+        settings = SettingsPage(this)
+        pages = listOf(home.view, commands.view, settings.view)
 
-        // --- setup ---
-        a11yText = Ui.label(this, "", 15f, top = 28)
-        col.addView(a11yText)
-        col.addView(Ui.button(this, "1 · Enable accessibility service") {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        })
-        micText = Ui.label(this, "", 15f, top = 20)
-        col.addView(micText)
-        col.addView(Ui.button(this, "2 · Grant microphone") { askPermissions() })
-        col.addView(Ui.label(this, "Voice control", 15f, top = 20))
-        toggle = Ui.button(this, "3 · Start listening") { toggleListening() }
-        col.addView(toggle)
-        heardText = Ui.label(this, "Last command: —", 14f, top = 20)
-        col.addView(heardText)
-
-        // --- custom ---
-        col.addView(Ui.label(this, "Make it yours", 20f, bold = true, top = 32))
-        col.addView(Ui.button(this, "Custom commands") {
-            startActivity(Intent(this, CommandsActivity::class.java))
-        })
-        col.addView(Ui.button(this, "Gestures") {
-            startActivity(Intent(this, GesturesActivity::class.java))
-        })
-
-        // --- modes ---
-        col.addView(Ui.label(this, "Execution modes", 20f, bold = true, top = 32))
-        col.addView(
-            Ui.label(
-                this,
-                "Each custom command can run in Normal mode (accessibility), as Root, or through Shizuku.",
-                13f, top = 4, color = 0xAAFFFFFF.toInt()
-            )
-        )
-        rootText = Ui.label(this, "", 15f, top = 14)
-        col.addView(rootText)
-        col.addView(Ui.button(this, "Test root access") {
-            Toast.makeText(this, "Asking for root…", Toast.LENGTH_SHORT).show()
-            Shell.testRootAsync { ok ->
-                Toast.makeText(this, if (ok) "Root granted" else "Root not available", Toast.LENGTH_SHORT).show()
-                refresh()
-            }
-        })
-        shizukuText = Ui.label(this, "", 15f, top = 14)
-        col.addView(shizukuText)
-        col.addView(Ui.button(this, "Grant Shizuku permission") { grantShizuku() })
-
-        // --- overlays / triggers ---
-        col.addView(Ui.label(this, "Options", 20f, bold = true, top = 32))
-        col.addView(switchRow("Top bar", Prefs.KEY_STATUS))
-        col.addView(switchRow("Top bar always visible (off = only while speaking)", Prefs.KEY_STATUS_ALWAYS, false))
-        col.addView(switchRow("Show taps & swipes", Prefs.KEY_FX))
-        col.addView(switchRow("Allow other apps to trigger commands", Prefs.KEY_EXTERNAL, false))
-
-        col.addView(Ui.label(this, "Grid size", 15f, bold = true, top = 22))
-        col.addView(
-            Ui.label(
-                this,
-                "Say “show grid”, then a cell number. Change it by voice: “set grid big / medium / small”.",
-                12f, top = 2, color = 0xAAFFFFFF.toInt()
-            )
-        )
-        gridGroup = RadioGroup(this)
-        for (m in GridMode.values()) {
-            val rb = RadioButton(this).apply {
-                text = "${m.label}: ${m.summary}"
-                setTextColor(Color.WHITE)
-                id = android.view.View.generateViewId()
-            }
-            gridIds[m] = rb.id
-            gridGroup.addView(rb)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.BLACK)
         }
-        gridGroup.setOnCheckedChangeListener { _, id ->
-            gridIds.entries.firstOrNull { it.value == id }?.key?.let { Prefs.setGridMode(this, it) }
-        }
-        col.addView(gridGroup)
+        val frame = FrameLayout(this)
+        pages.forEach { frame.addView(it, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)) }
+        root.addView(frame, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        root.addView(buildNav(), LinearLayout.LayoutParams(MATCH_PARENT, Ui.dp(this, 62)))
+        setContentView(root)
 
-        col.addView(
-            Ui.label(
-                this,
-                "COMMANDS\n\n" +
-                    "SEE & TAP\n" +
-                    "show numbers · hide numbers\n" +
-                    "tap 5 · double tap 5 · long press 5\n" +
-                    "click <text on screen>\n" +
-                    "show grid → say a cell number: zooms in, then clicks\n" +
-                    "set grid big · medium · small · undo (grid step back)\n" +
-                    "in the grid: tap · double tap · hold click the centre of the current area\n" +
-                    "cancel (hides numbers and grid)\n\n" +
-                    "MOVE\n" +
-                    "scroll down · up · left · right\n" +
-                    "scroll to top · scroll to bottom\n" +
-                    "swipe left · right · up · down · refresh\n\n" +
-                    "NAVIGATE\n" +
-                    "go back · go home · recents\n" +
-                    "notifications · quick settings\n" +
-                    "screenshot · lock screen · power menu · split screen\n" +
-                    "open <app name>\n\n" +
-                    "TEXT\n" +
-                    "type <text> · start dictation · stop dictation\n" +
-                    "select all · copy · paste · cut\n" +
-                    "delete · delete word · clear text · new line · enter\n\n" +
-                    "DEVICE\n" +
-                    "volume up · volume down · mute · unmute\n\n" +
-                    "CONTROL\n" +
-                    "run <custom command name> · stop macro\n" +
-                    "pause listening · resume listening\n" +
-                    "show commands · stop listening",
-                14f, top = 32
-            )
-        )
+        tab = intent?.getIntExtra("tab", 0)?.coerceIn(0, 2) ?: 0
+        pages.forEachIndexed { i, v -> v.visibility = if (i == tab) View.VISIBLE else View.GONE }
+        updateIcons(false)
+        navRow.post { moveIndicator(false) }
+        pageShown(tab)
 
         try {
             Shizuku.addRequestPermissionResultListener(shizukuListener)
         } catch (_: Throwable) {
         }
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent?.getIntExtra("tab", -1)?.takeIf { it in 0..2 }?.let { select(it) }
     }
 
     override fun onDestroy() {
@@ -187,29 +87,137 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        ListenService.onHeard = { msg -> runOnUiThread { heardText.text = "Last command: $msg" } }
-        refresh()
+        ListenService.onHeard = { msg -> runOnUiThread { home.showHeard(msg) } }
+        ListenService.onState = { runOnUiThread { refreshAll() } }
+        ListenService.onLevel = { db -> home.orb.pushLevel(db) }
+        refreshAll()
+        commands.render(false)
     }
 
     override fun onPause() {
         ListenService.onHeard = null
+        ListenService.onState = null
+        ListenService.onLevel = null
         super.onPause()
     }
 
-    private fun hasMic() =
-        checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-
-    private fun refresh() {
-        a11yText.text = if (OpenVoiceService.instance != null) "● Accessibility service: on"
-        else "○ Accessibility service: off"
-        micText.text = if (hasMic()) "● Microphone: granted" else "○ Microphone: not granted"
-        toggle.text = if (ListenService.running) "3 · Stop listening" else "3 · Start listening"
-        rootText.text = "Root: ${Shell.rootStatus()}"
-        shizukuText.text = "Shizuku: ${Shell.shizukuStatus()}"
-        gridIds[Prefs.gridMode(this)]?.let { if (gridGroup.checkedRadioButtonId != it) gridGroup.check(it) }
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (tab != 0) select(0) else super.onBackPressed()
     }
 
-    private fun askPermissions() {
+    // ------------------------------------------------------------------
+    // Bottom navigation (icons only)
+    // ------------------------------------------------------------------
+    private fun buildNav(): View {
+        val bar = FrameLayout(this).apply { setBackgroundColor(0xFF0A0A0A.toInt()) }
+        navRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val res = listOf(R.drawable.ic_nav_home, R.drawable.ic_nav_commands, R.drawable.ic_nav_settings)
+        val names = listOf("Home", "Commands", "Settings")
+        icons = res.mapIndexed { i, r ->
+            ImageView(this).apply {
+                setImageResource(r)
+                contentDescription = names[i]
+                scaleType = ImageView.ScaleType.CENTER
+                setOnClickListener { select(i) }
+                Anim.press(this)
+            }
+        }
+        icons.forEach { navRow.addView(it, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f)) }
+        bar.addView(navRow, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+
+        // thin line on top
+        bar.addView(View(this).apply { setBackgroundColor(0x33FFFFFF) }, FrameLayout.LayoutParams(MATCH_PARENT, Ui.dp(this, 1)))
+
+        indicator = View(this).apply {
+            background = GradientDrawable().apply {
+                setColor(Color.WHITE)
+                cornerRadius = Ui.dp(this@MainActivity, 3).toFloat()
+            }
+        }
+        bar.addView(
+            indicator,
+            FrameLayout.LayoutParams(Ui.dp(this, 30), Ui.dp(this, 3), Gravity.TOP or Gravity.START)
+        )
+        return bar
+    }
+
+    private fun moveIndicator(animate: Boolean) {
+        val w = navRow.width
+        if (w == 0) return
+        val cell = w / 3f
+        val x = tab * cell + (cell - indicator.width) / 2f
+        if (animate && Anim.on(this)) {
+            indicator.animate().translationX(x).setDuration(320).setInterpolator(OvershootInterpolator(1.4f)).start()
+        } else {
+            indicator.translationX = x
+        }
+    }
+
+    private fun updateIcons(animate: Boolean) {
+        icons.forEachIndexed { i, v ->
+            val sel = i == tab
+            v.setColorFilter(if (sel) Color.WHITE else 0x77FFFFFF)
+            val s = if (sel) 1.18f else 1f
+            if (animate && Anim.on(this)) {
+                v.animate().scaleX(s).scaleY(s).setDuration(260).setInterpolator(OvershootInterpolator(3f)).start()
+            } else {
+                v.scaleX = s
+                v.scaleY = s
+            }
+        }
+    }
+
+    fun select(i: Int) {
+        if (i == tab) return
+        val oldIdx = tab
+        val old = pages[oldIdx]
+        val new = pages[i]
+        val dir = if (i > oldIdx) 1 else -1
+        tab = i
+        updateIcons(true)
+        moveIndicator(true)
+
+        if (!Anim.on(this)) {
+            pages.forEachIndexed { idx, v -> v.visibility = if (idx == i) View.VISIBLE else View.GONE }
+        } else {
+            val shift = Ui.dp(this, 40).toFloat()
+            old.animate().cancel()
+            new.animate().cancel()
+            new.visibility = View.VISIBLE
+            new.alpha = 0f
+            new.translationX = dir * shift
+            new.animate().alpha(1f).translationX(0f).setDuration(280)
+                .setInterpolator(DecelerateInterpolator(1.5f)).start()
+            old.animate().alpha(0f).translationX(-dir * shift).setDuration(180).withEndAction {
+                if (tab != oldIdx) old.visibility = View.GONE
+                old.translationX = 0f
+                old.alpha = 1f
+            }.start()
+        }
+        pageShown(i)
+    }
+
+    private fun pageShown(i: Int) {
+        when (i) {
+            0 -> home.onShow()
+            1 -> commands.onShow()
+            else -> settings.onShow()
+        }
+    }
+
+    fun refreshAll() {
+        home.refresh()
+        settings.refresh()
+    }
+
+    // ------------------------------------------------------------------
+    // Shared actions for the pages
+    // ------------------------------------------------------------------
+    fun hasMic() =
+        checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    fun askPermissions() {
         val perms = mutableListOf(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= 33) perms.add(Manifest.permission.POST_NOTIFICATIONS)
         requestPermissions(perms.toTypedArray(), 1)
@@ -217,10 +225,20 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(code, perms, results)
-        refresh()
+        refreshAll()
     }
 
-    private fun grantShizuku() {
+    /** Orb tap: start the service, or turn listening off / on while keeping the notification. */
+    fun toggleListening() {
+        if (!hasMic()) {
+            askPermissions()
+            return
+        }
+        if (!ListenService.running) ListenService.start(this) else ListenService.toggle(this)
+        ui.postDelayed({ refreshAll() }, 350)
+    }
+
+    fun grantShizuku() {
         try {
             when {
                 !Shizuku.pingBinder() ->
@@ -234,19 +252,6 @@ class MainActivity : Activity() {
         } catch (e: Throwable) {
             Toast.makeText(this, "Shizuku isn't available on this device", Toast.LENGTH_LONG).show()
         }
-        refresh()
-    }
-
-    private fun toggleListening() {
-        if (ListenService.running) {
-            ListenService.stop(this)
-        } else {
-            if (!hasMic()) {
-                askPermissions()
-                return
-            }
-            ListenService.start(this)
-        }
-        ui.postDelayed({ refresh() }, 400)
+        refreshAll()
     }
 }

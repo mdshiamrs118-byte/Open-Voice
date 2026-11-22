@@ -24,9 +24,33 @@ Accessibility Service API.
 | `open <app name>` | Launch an app |
 | `type <text>`, `start dictation` / `stop dictation` | Typing |
 | `select all`, `copy`, `paste`, `cut`, `delete`, `delete word`, `clear text`, `new line`, `enter` | Editing |
-| `volume up/down`, `mute`, `unmute` | Media volume |
+| `volume up/down`, `volume full/low`, `volume 40 percent`, `ring volume down`, `mute`, `unmute` | Volume (media, ring, alarm, notification, call) |
+| `brightness up/down`, `brightness full/low`, `brightness 60 percent`, `brightness auto` | Screen brightness (needs “Modify system settings”) |
+| `turn on/off Wi‑Fi`, `Bluetooth`, `hotspot`, `airplane mode`, `location`, `mobile data`, `NFC`, `do not disturb`, `flashlight`, `auto-rotate`, `battery saver`, `dark mode`, `night light`… | System switches. Any Quick Settings tile name works too, and `toggle <name>` flips it |
+| `silent mode`, `vibrate mode`, `ring mode` | Sound mode |
 | `pause listening` / `resume listening` | Ignore everything except the wake phrase |
 | `show commands`, `stop listening` | Help / stop |
+
+## App layout
+
+A bottom bar with three icons:
+
+- **Home**: the orb. Tap to start, turn listening off and on. It breathes and reacts to your voice.
+- **Commands**: your custom commands and every built-in command, each with an on/off switch,
+  plus search, New / Examples / Export / Import and Gestures.
+- **Settings**: permissions, top bar, grid size, animations, Root / Shizuku, how system switches are
+  changed, and external triggers.
+
+The listening notification has a **Turn off / Turn on** button (and **Stop**), so you can pause the
+microphone without leaving the app.
+
+## System switches
+
+Flashlight and auto-rotate use direct Android APIs. Everything else (Wi‑Fi, Bluetooth, hotspot,
+airplane mode, any other tile) works by opening Quick Settings and tapping the tile, because Android
+no longer lets apps flip those directly. In *Settings → System controls* you can switch to Root or
+Shizuku to use direct commands instead (`svc wifi enable`, `cmd connectivity airplane-mode enable`…)
+where they exist. Tile names depend on your phone and language; use the name you see in Quick Settings.
 
 ## Overlays
 

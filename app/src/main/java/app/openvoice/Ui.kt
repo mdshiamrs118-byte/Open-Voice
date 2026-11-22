@@ -2,6 +2,8 @@ package app.openvoice
 
 import android.app.Activity
 import android.content.Context
+import android.content.res.ColorStateList
+import android.widget.Switch
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -54,7 +56,28 @@ object Ui {
             cornerRadius = dp(c, 28).toFloat()
         }
         setOnClickListener { onClick() }
+        Anim.press(this)
         layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(c, 56)).apply { topMargin = dp(c, 12) }
+    }
+
+    /** A page that scrolls, without attaching it to an activity. */
+    fun scrollColumn(c: Context): Pair<ScrollView, LinearLayout> {
+        val col = LinearLayout(c).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(c, 22), dp(c, 36), dp(c, 22), dp(c, 28))
+        }
+        val sv = ScrollView(c).apply {
+            setBackgroundColor(Color.BLACK)
+            isVerticalScrollBarEnabled = false
+            addView(col)
+        }
+        return sv to col
+    }
+
+    fun styleSwitch(s: Switch) {
+        val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
+        s.thumbTintList = ColorStateList(states, intArrayOf(Color.WHITE, 0xFF8A8A8A.toInt()))
+        s.trackTintList = ColorStateList(states, intArrayOf(0x99FFFFFF.toInt(), 0x44FFFFFF))
     }
 
     /** Small outlined button for rows. */
@@ -74,6 +97,7 @@ object Ui {
             cornerRadius = dp(c, 18).toFloat()
         }
         setOnClickListener { onClick() }
+        Anim.press(this)
         layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, dp(c, 38)).apply {
             topMargin = dp(c, 8)
             marginEnd = dp(c, 8)

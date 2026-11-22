@@ -577,7 +577,7 @@ class MacroEngine(private val svc: OpenVoiceService) {
                 if (c == Command.Unknown) Out(error = "unknown command “$phrase”")
                 else {
                     val r = svc.exec(c)
-                    if (isFail(r)) Out(error = r) else Out(600)
+                    if (isFail(r)) Out(error = r) else Out(if (c is Command.Toggle) 2500 else 600)
                 }
             }
             "set_clipboard" -> {

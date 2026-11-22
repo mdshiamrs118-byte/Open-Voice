@@ -24,6 +24,11 @@ import android.os.BatteryManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.speech.tts.TextToSpeech
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.net.Uri
+import android.provider.Settings
+import kotlin.math.roundToInt
 import kotlin.math.abs
 
 class OpenVoiceService : AccessibilityService() {
@@ -59,6 +64,10 @@ class OpenVoiceService : AccessibilityService() {
         fx = FeedbackOverlay(this)
         status = StatusOverlay(this)
         engine = MacroEngine(this)
+        try {
+            getSystemService(CameraManager::class.java).registerTorchCallback(torchCb, main)
+        } catch (_: Exception) {
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -78,11 +87,15 @@ class OpenVoiceService : AccessibilityService() {
         tts?.shutdown()
         tts = null
         ttsReady = false
+        try {
+            getSystemService(CameraManager::class.java).unregisterTorchCallback(torchCb)
+        } catch (_: Exception) {
+        }
         if (::numbers.isInitialized) {
             numbers.hide()
             grid.hide()
             fx.hide()
-            status.hide()
+            status.hide(false)
         }
         instance = null
         return super.onUnbind(intent)
@@ -258,10 +271,10 @@ class OpenVoiceService : AccessibilityService() {
         }
 
         var heard = alternatives[0]
-        var cmd: Command = CommandParser.parse(heard)
+        var cmd: Command = parseEnabled(heard)
         if (cmd == Command.Unknown) {
             for (alt in alternatives.drop(1)) {
-                val c = CommandParser.parse(alt)
+                val c = parseEnabled(alt)
                 if (c != Command.Unknown) {
                     cmd = c
                     heard = alt
@@ -281,6 +294,11 @@ class OpenVoiceService : AccessibilityService() {
             }
         }
         return "“$heard” → ${execute(cmd)}"
+    }
+
+    private fun parseEnabled(text: String): Command {
+        val c = CommandParser.parse(text)
+        return if (c != Command.Unknown && !BuiltIns.isEnabled(this, c.groupId())) Command.Unknown else c
     }
 
     private fun done(ok: Boolean) = if (ok) "done" else "failed"
@@ -413,6 +431,11 @@ class OpenVoiceService : AccessibilityService() {
         Command.Mute -> volume(AudioManager.ADJUST_MUTE)
         Command.Unmute -> volume(AudioManager.ADJUST_UNMUTE)
 
+        is Command.Volume -> volumeCmd(cmd.stream, cmd.op, cmd.pct)
+        is Command.Brightness -> brightnessCmd(cmd.op, cmd.pct)
+        is Command.Toggle -> systemToggle(cmd.name, cmd.state)
+        is Command.Ringer -> ringer(cmd.mode)
+
         // control
         Command.Sleep -> {
             sleeping = true
@@ -421,7 +444,7 @@ class OpenVoiceService : AccessibilityService() {
         Command.Wake -> "already listening"
         Command.ShowCommands -> {
             startActivity(
-                Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                Intent(this, MainActivity::class.java).putExtra("tab", 1).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
             "opening list"
         }
@@ -721,6 +744,240 @@ class OpenVoiceService : AccessibilityService() {
             done(node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id))
         } else {
             "needs Android 11+"
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // System controls: volume, brightness, switches
+    // ------------------------------------------------------------------
+    private var torchOn = false
+    private val torchCb = object : CameraManager.TorchCallback() {
+        override fun onTorchModeChanged(cameraId: String, enabled: Boolean) {
+            torchOn = enabled
+        }
+    }
+
+    private fun streamOf(name: String) = when (name) {
+        "ring" -> AudioManager.STREAM_RING
+        "alarm" -> AudioManager.STREAM_ALARM
+        "notification" -> AudioManager.STREAM_NOTIFICATION
+        "call" -> AudioManager.STREAM_VOICE_CALL
+        "system" -> AudioManager.STREAM_SYSTEM
+        else -> AudioManager.STREAM_MUSIC
+    }
+
+    private fun volumeCmd(stream: String, op: String, pct: Int): String {
+        val st = streamOf(stream)
+        return try {
+            val max = audio.getStreamMaxVolume(st)
+            when (op) {
+                "up" -> audio.adjustStreamVolume(st, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
+                "down" -> audio.adjustStreamVolume(st, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
+                "mute" -> audio.adjustStreamVolume(st, AudioManager.ADJUST_MUTE, AudioManager.FLAG_SHOW_UI)
+                else -> {
+                    val target = when (op) {
+                        "max" -> max
+                        "min" -> (max * 0.2f).roundToInt().coerceAtLeast(1)
+                        else -> (pct / 100f * max).roundToInt()
+                    }
+                    audio.setStreamVolume(st, target.coerceIn(0, max), AudioManager.FLAG_SHOW_UI)
+                }
+            }
+            val now = audio.getStreamVolume(st)
+            "$stream volume ${if (max > 0) now * 100 / max else 0}%"
+        } catch (e: SecurityException) {
+            "needs Do Not Disturb access for that volume"
+        } catch (e: Exception) {
+            "failed"
+        }
+    }
+
+    private fun ringer(mode: String): String = try {
+        audio.ringerMode = when (mode) {
+            "silent" -> AudioManager.RINGER_MODE_SILENT
+            "vibrate" -> AudioManager.RINGER_MODE_VIBRATE
+            else -> AudioManager.RINGER_MODE_NORMAL
+        }
+        "$mode mode"
+    } catch (e: SecurityException) {
+        "needs Do Not Disturb access (try “turn on do not disturb”)"
+    } catch (e: Exception) {
+        "failed"
+    }
+
+    private fun askWriteSettings(): String {
+        try {
+            startActivity(
+                Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:$packageName"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (_: Exception) {
+        }
+        return "allow “Modify system settings” for Open Voice first"
+    }
+
+    private fun brightnessCmd(op: String, pct: Int): String {
+        val mode = Prefs.sysMode(this)
+        val cur = try {
+            Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128)
+        } catch (e: Exception) {
+            return "failed"
+        }
+        if (op == "auto") {
+            if (mode != Mode.NORMAL) {
+                Shell.exec(mode, "settings put system screen_brightness_mode 1")
+                return "auto brightness on"
+            }
+            if (!Settings.System.canWrite(this)) return askWriteSettings()
+            Settings.System.putInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC)
+            return "auto brightness on"
+        }
+        val step = (255 * 0.15f).roundToInt()
+        val target = when (op) {
+            "up" -> cur + step
+            "down" -> cur - step
+            "max" -> 255
+            "min" -> (255 * 0.08f).roundToInt()
+            else -> (pct / 100f * 255).roundToInt()
+        }.coerceIn(1, 255)
+
+        if (mode != Mode.NORMAL) {
+            Shell.exec(mode, "settings put system screen_brightness_mode 0 ; settings put system screen_brightness $target")
+            return "brightness ${target * 100 / 255}%"
+        }
+        if (!Settings.System.canWrite(this)) return askWriteSettings()
+        return try {
+            Settings.System.putInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+            Settings.System.putInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, target)
+            "brightness ${target * 100 / 255}%"
+        } catch (e: Exception) {
+            "failed"
+        }
+    }
+
+    private fun setTorch(state: Boolean?): String {
+        return try {
+            val cm = getSystemService(CameraManager::class.java)
+            val id = cm.cameraIdList.firstOrNull {
+                cm.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+            } ?: return "no flashlight on this device"
+            val target = state ?: !torchOn
+            cm.setTorchMode(id, target)
+            "flashlight ${if (target) "on" else "off"}"
+        } catch (e: Exception) {
+            "flashlight failed"
+        }
+    }
+
+    /**
+     * Flips a system switch. Flashlight and auto-rotate use direct APIs; Root/Shizuku mode uses shell
+     * commands where one exists; everything else (Wi-Fi, Bluetooth, hotspot, any other tile) works by
+     * opening Quick Settings and tapping the tile.
+     */
+    private fun systemToggle(rawName: String, state: Boolean?): String {
+        val key = SystemToggles.canon(rawName)
+        val spec = SystemToggles.spec(key)
+        val title = spec?.title ?: rawName
+        val labels = spec?.labels ?: listOf(rawName)
+        val word = when (state) { true -> "on"; false -> "off"; null -> "toggled" }
+
+        if (key == "flashlight") return setTorch(state)
+        if (key == "rotate" && Settings.System.canWrite(this)) {
+            return try {
+                val now = Settings.System.getInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, 1) == 1
+                val target = state ?: !now
+                Settings.System.putInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, if (target) 1 else 0)
+                "auto-rotate ${if (target) "on" else "off"}"
+            } catch (e: Exception) {
+                "failed"
+            }
+        }
+
+        val mode = Prefs.sysMode(this)
+        if (mode != Mode.NORMAL && state != null) {
+            val cmd = if (state) spec?.on else spec?.off
+            if (cmd != null) {
+                Shell.check(mode) { ok, why ->
+                    if (ok) {
+                        Shell.exec(mode, cmd)
+                        setStatus("$title $word")
+                    } else {
+                        setStatus("⚠ $why")
+                    }
+                }
+                return "$title → $word"
+            }
+        }
+        return toggleViaTile(labels, state, title)
+    }
+
+    private fun toggleViaTile(labels: List<String>, want: Boolean?, title: String): String {
+        if (!performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)) return "can't open quick settings"
+        fun attempt(n: Int) {
+            val node = rootInActiveWindow?.let { findTile(it, labels) }
+            if (node == null) {
+                if (n < 5) {
+                    main.postDelayed({ attempt(n + 1) }, 350)
+                } else {
+                    setStatus("“$title” tile not found")
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                }
+                return
+            }
+            val state = tileState(node)
+            if (want != null && state == want) {
+                setStatus("$title already ${if (want) "on" else "off"}")
+            } else {
+                val r = Rect()
+                node.getBoundsInScreen(r)
+                clickNode(node, r)
+                setStatus("$title ${when (want) { true -> "on"; false -> "off"; null -> "toggled" }}")
+            }
+            main.postDelayed({ performGlobalAction(GLOBAL_ACTION_BACK) }, 700)
+        }
+        main.postDelayed({ attempt(0) }, 600)
+        return "$title…"
+    }
+
+    private fun findTile(root: AccessibilityNodeInfo, labels: List<String>): AccessibilityNodeInfo? {
+        var best: AccessibilityNodeInfo? = null
+        var bestScore = 0
+        fun walk(n: AccessibilityNodeInfo?) {
+            if (n == null) return
+            val t = (n.text?.toString() ?: "") + " " + (n.contentDescription?.toString() ?: "")
+            val low = t.lowercase()
+            for (l in labels) {
+                val ll = l.lowercase()
+                if (low.contains(ll)) {
+                    val score = if (low.trim().startsWith(ll)) 2 else 1
+                    var target: AccessibilityNodeInfo? = n
+                    while (target != null && !target.isClickable) target = target.parent
+                    if (target != null && score > bestScore) {
+                        best = target
+                        bestScore = score
+                    }
+                }
+            }
+            for (i in 0 until n.childCount) walk(n.getChild(i))
+        }
+        walk(root)
+        return best
+    }
+
+    private fun tileState(node: AccessibilityNodeInfo): Boolean? {
+        if (node.isCheckable) return node.isChecked
+        val sb = StringBuilder()
+        if (Build.VERSION.SDK_INT >= 30) sb.append(node.stateDescription ?: "").append(' ')
+        sb.append(node.contentDescription ?: "").append(' ').append(node.text ?: "")
+        for (i in 0 until node.childCount) {
+            val c = node.getChild(i) ?: continue
+            sb.append(' ').append(c.text ?: "").append(' ').append(c.contentDescription ?: "")
+        }
+        val t = sb.toString().lowercase()
+        return when {
+            Regex("\\boff\\b").containsMatchIn(t) -> false
+            Regex("\\bon\\b").containsMatchIn(t) -> true
+            else -> null
         }
     }
 
