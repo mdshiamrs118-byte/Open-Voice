@@ -88,8 +88,15 @@ class HomePage(private val a: MainActivity) {
             else -> "Tap the orb to turn listening back on"
         }
 
-        val aiOn = Prefs.aiMode(a) && AiEngine.ready(a)
-        modeChip.text = if (aiOn) "✦ AI mode · ${AiEngine.activeModel(a)?.title ?: ""}" else "Normal mode · tap to switch"
+        val src = Prefs.aiSource(a)
+        val aiOn = Prefs.aiMode(a) && (src != "local" || AiEngine.ready(a))
+        modeChip.text = if (aiOn) {
+            "✦ AI mode · " + when (src) {
+                "api" -> "API"
+                "web" -> "Web · ${WebSites.find(a, Prefs.webAiId(a))?.name ?: ""}"
+                else -> AiEngine.activeModel(a)?.title ?: "Local"
+            }
+        } else "Normal mode · tap to switch"
 
         val needA11y = OpenVoiceService.instance == null
         val needMic = !a.hasMic()

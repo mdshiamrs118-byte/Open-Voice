@@ -47,6 +47,7 @@ class OpenVoiceService : AccessibilityService() {
     private lateinit var engine: MacroEngine
     private var recorder: GestureRecorder? = null
     private var planRunner: PlanRunner? = null
+    private lateinit var web: WebAiRunner
     private val aiExec = Executors.newSingleThreadExecutor()
     private var appCache: List<Pair<String, String>>? = null
     private var appCacheAt = 0L
@@ -70,7 +71,8 @@ class OpenVoiceService : AccessibilityService() {
         fx = FeedbackOverlay(this)
         status = StatusOverlay(this)
         engine = MacroEngine(this)
-        if (Prefs.aiMode(this)) AiEngine.preload(this)
+        web = WebAiRunner(this)
+        if (Prefs.aiMode(this) && Prefs.aiSource(this) == "local") AiEngine.preload(this)
         try {
             getSystemService(CameraManager::class.java).registerTorchCallback(torchCb, main)
         } catch (_: Exception) {
@@ -90,6 +92,7 @@ class OpenVoiceService : AccessibilityService() {
         main.removeCallbacksAndMessages(null)
         if (::engine.isInitialized) engine.cancel()
         planRunner?.cancel()
+        if (::web.isInitialized) web.destroy()
         recorder?.cancel()
         recorder = null
         tts?.shutdown()
@@ -342,7 +345,19 @@ class OpenVoiceService : AccessibilityService() {
     // ------------------------------------------------------------------
     // AI mode
     // ------------------------------------------------------------------
-    fun aiActive(): Boolean = Prefs.aiMode(this) && AiEngine.ready(this)
+    /** AI mode is on and has something to think with (local model, API keys or a Web AI). */
+    fun aiActive(): Boolean {
+        if (!Prefs.aiMode(this)) return false
+        return when (Prefs.aiSource(this)) {
+            "api" -> true
+            "web" -> true
+            else -> AiEngine.ready(this)
+        }
+    }
+
+    fun resetWeb() {
+        if (::web.isInitialized) main.post { web.destroy() }
+    }
 
     internal fun runCustomThen(cmd: CustomCommand, captured: String?, done: (String) -> Unit) {
         engine.run(cmd, captured, done)
@@ -376,35 +391,108 @@ class OpenVoiceService : AccessibilityService() {
 
     private fun startAi(alts: List<String>): String {
         val text = alts[0]
-        val ctx = AiContext(appLabels(), visibleTexts(), Store.commands(this).filter { it.enabled }.toList())
+        val a = AiContext(appLabels(), visibleTexts(), Store.commands(this).filter { it.enabled }.toList())
+        val fg = foregroundPackage()?.let { appLabel(it) }.orEmpty()
         val thr = Prefs.aiThreshold(this)
         val show = Prefs.aiShowPlan(this)
+        val source = Prefs.aiSource(this)
+        val rulesFirst = Prefs.aiRulesFirst(this)
+        val allowShell = Prefs.aiShell(this)
+        val shellMode = Prefs.aiShellMode(this)
+        val shareApps = Prefs.aiShareApps(this)
+        val shareScreen = Prefs.aiShareScreen(this)
+        val app = applicationContext
+
+        if (source != "local") setStatus("“$text” → thinking…", 40_000)
+
         aiExec.execute {
-            val res = AiEngine.plan(applicationContext, text, ctx, thr)
-            main.post {
-                if (res.engineFailed) {
-                    // model problem: fall back to the normal exact-phrase pipeline
-                    val r = handleSpeech(alts, false)
-                    setStatus(r)
-                    ListenService.onHeard?.invoke(r)
-                } else if (res.error != null) {
-                    val msg = "“$text” → ${res.error}"
-                    setStatus(msg, 3500)
-                    ListenService.onHeard?.invoke(msg)
+            var res: AiEngine.PlanResult? = null
+            var note = ""
+
+            // simple, exact commands never need a cloud round-trip
+            if (source == "local" || rulesFirst) res = AiEngine.rulePlan(app, text, a)
+
+            if (res == null && source == "api") {
+                if (!ApiStore.hasUsable(app)) {
+                    note = if (ApiStore.keys(app).isEmpty()) "no API keys → local" else "all API keys exhausted → local"
                 } else {
-                    val summary = res.steps.filter { it !is PlanStep.Pause }.joinToString(" → ") { it.label }
-                    if (res.steps.size > 1 && show) setStatus("▶ $summary", 3000)
-                    planRunner?.cancel()
-                    planRunner = PlanRunner(this).also { runner ->
-                        runner.run(res.steps, show) { r ->
-                            setStatus(if (r.startsWith("⚠")) r else "$summary · $r", 3000)
-                            ListenService.onHeard?.invoke("“$text” → $summary · $r")
+                    val nonce = AiPrompt.nonce()
+                    val prompt = AiPrompt.build(app, a, text, nonce, fg, allowShell, shellMode, shareApps, shareScreen)
+                    res = ApiClient.plan(app, prompt, nonce, a, allowShell, shellMode)
+                    if (res == null) note = "${ApiClient.lastNote} → local"
+                }
+            }
+
+            if (res == null && source == "web") {
+                val latch = java.util.concurrent.CountDownLatch(1)
+                var webRes: AiEngine.PlanResult? = null
+                var webErr = ""
+                main.post {
+                    val site = WebSites.find(app, Prefs.webAiId(app))
+                    if (site == null) {
+                        webErr = "no Web AI selected"
+                        latch.countDown()
+                    } else {
+                        val nonce = AiPrompt.nonce()
+                        val prompt = AiPrompt.build(app, a, text, nonce, fg, allowShell, shellMode, shareApps, shareScreen)
+                            .replace("\n", " ")
+                        web.ask(site, prompt, nonce, 75_000) { json, err ->
+                            if (json != null) {
+                                webRes = AiPlan.parse(app, json, nonce, a, allowShell, shellMode, "Web · ${site.name}")
+                                if (webRes == null) webErr = "unreadable reply"
+                            } else {
+                                webErr = err ?: "no reply"
+                            }
+                            latch.countDown()
                         }
+                    }
+                }
+                latch.await(95, java.util.concurrent.TimeUnit.SECONDS)
+                res = webRes
+                if (res == null) note = "${webErr.ifEmpty { "no reply" }} → local"
+            }
+
+            if (res == null) res = AiEngine.plan(app, text, a, thr)
+
+            val finalRes: AiEngine.PlanResult = res ?: AiEngine.PlanResult(emptyList(), "no AI available", true)
+            val finalNote = note
+            main.post { presentPlan(text, alts, finalRes, finalNote, show) }
+        }
+        return "“$text” → …"
+    }
+
+    private fun presentPlan(text: String, alts: List<String>, res: AiEngine.PlanResult, note: String, show: Boolean) {
+        val via = listOf(res.source, note).filter { it.isNotEmpty() }.joinToString(" · ")
+        when {
+            res.engineFailed -> {
+                // no usable AI at all: fall back to the exact-phrase pipeline
+                val r = handleSpeech(alts, false)
+                val msg = if (note.isEmpty()) r else "$note · $r"
+                setStatus(msg, 3500)
+                ListenService.onHeard?.invoke(msg)
+            }
+            res.error != null -> {
+                val msg = "“$text” → ${res.error}" + if (note.isNotEmpty()) " ($note)" else ""
+                setStatus(msg, 4000)
+                ListenService.onHeard?.invoke(msg)
+            }
+            res.steps.isEmpty() -> {
+                val msg = res.reply ?: "nothing to do"
+                setStatus("$msg · $via", 4000)
+                ListenService.onHeard?.invoke("“$text” → $msg · $via")
+            }
+            else -> {
+                val summary = res.steps.filter { it !is PlanStep.Pause }.joinToString(" → ") { it.label }
+                if (show && (res.steps.size > 1 || res.source != "Local")) setStatus("▶ $summary · $via", 3000)
+                planRunner?.cancel()
+                planRunner = PlanRunner(this).also { runner ->
+                    runner.run(res.steps, show) { r ->
+                        setStatus(if (r.startsWith("⚠")) r else "$summary · $r", 3000)
+                        ListenService.onHeard?.invoke("“$text” → $summary · $r · $via")
                     }
                 }
             }
         }
-        return "“$text” → …"
     }
 
     private fun cleanClickTarget(raw: String): String {

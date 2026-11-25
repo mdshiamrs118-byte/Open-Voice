@@ -16,7 +16,6 @@ import android.widget.TextView
 import android.widget.Toast
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
-import android.view.Gravity
 
 /** Settings tab: everything that used to sit on the main screen. */
 class SettingsPage(private val a: MainActivity) {
@@ -87,7 +86,8 @@ class SettingsPage(private val a: MainActivity) {
         seg.addView(segAi, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
         col.addView(seg)
         aiStatus = statusLine()
-        col.addView(Ui.small(a, "Manage AI models") { a.startActivity(Intent(a, ModelsActivity::class.java)) })
+        col.addView(Ui.small(a, "AI engine · API keys · Web AI") { a.startActivity(Intent(a, AiSettingsActivity::class.java)) })
+        col.addView(Ui.small(a, "Manage local AI models") { a.startActivity(Intent(a, ModelsActivity::class.java)) })
         col.addView(Ui.label(a, "AI sensitivity", 13f, bold = true, top = 14))
         note("Strict only acts when it is sure. Loose guesses more.")
         sensGroup = RadioGroup(a)
@@ -207,14 +207,23 @@ class SettingsPage(private val a: MainActivity) {
     }
 
     fun setAiMode(on: Boolean) {
-        if (on && !AiEngine.ready(a)) {
-            Toast.makeText(a, "Download an AI model first", Toast.LENGTH_LONG).show()
-            a.startActivity(Intent(a, ModelsActivity::class.java))
-            styleSeg()
-            return
+        if (on) {
+            val src = Prefs.aiSource(a)
+            val problem: Pair<String, Class<*>>? = when {
+                src == "local" && !AiEngine.ready(a) -> "Download a local AI model first" to ModelsActivity::class.java
+                src == "api" && ApiStore.keys(a).isEmpty() -> "Add an API key first" to ApiKeysActivity::class.java
+                src == "web" && WebSites.find(a, Prefs.webAiId(a)) == null -> "Choose and log in to a Web AI first" to WebAiActivity::class.java
+                else -> null
+            }
+            if (problem != null) {
+                Toast.makeText(a, problem.first, Toast.LENGTH_LONG).show()
+                a.startActivity(Intent(a, problem.second))
+                styleSeg()
+                return
+            }
         }
         Prefs.set(a, Prefs.KEY_AI_MODE, on)
-        if (on) AiEngine.preload(a)
+        if (on && Prefs.aiSource(a) == "local") AiEngine.preload(a)
         styleSeg()
         a.refreshAll()
     }
@@ -263,7 +272,11 @@ class SettingsPage(private val a: MainActivity) {
         shizukuText.text = "Shizuku: ${Shell.shizukuStatus()}"
         styleSeg()
         val m = AiEngine.activeModel(a)
-        aiStatus.text = if (m == null) "No AI model installed" else "Model: ${m.title} · ${AiEngine.statusText}"
+aiStatus.text = when (Prefs.aiSource(a)) {
+            "api" -> "Engine: API · ${ApiStore.keys(a).count { ApiStore.usable(it) }}/${ApiStore.keys(a).size} keys ready (falls back to local)"
+            "web" -> "Engine: Web AI · ${WebSites.find(a, Prefs.webAiId(a))?.name ?: "none chosen"} (falls back to local)"
+            else -> if (m == null) "Engine: Local · no model installed" else "Engine: Local · ${m.title} · ${AiEngine.statusText}"
+        }
         sensIds[Prefs.aiSensitivity(a)]?.let { if (sensGroup.checkedRadioButtonId != it) sensGroup.check(it) }
         gridIds[Prefs.gridMode(a)]?.let { if (gridGroup.checkedRadioButtonId != it) gridGroup.check(it) }
         sysIds[Prefs.sysMode(a)]?.let { if (sysGroup.checkedRadioButtonId != it) sysGroup.check(it) }

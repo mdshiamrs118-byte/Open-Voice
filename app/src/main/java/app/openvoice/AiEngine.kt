@@ -21,7 +21,13 @@ object AiEngine {
     private class Resolved(val steps: List<PlanStep>, val conf: Float)
     private class Seq(val items: List<Resolved>, val minConf: Float)
 
-    class PlanResult(val steps: List<PlanStep>, val error: String? = null, val engineFailed: Boolean = false)
+    class PlanResult(
+        val steps: List<PlanStep>,
+        val error: String? = null,
+        val engineFailed: Boolean = false,
+        val reply: String? = null,
+        val source: String = "Local"
+    )
 
     @Volatile
     var statusText = "Not loaded"
@@ -132,13 +138,7 @@ object AiEngine {
                     inputs[name] = tensor
                 }
                 s.run(inputs).use { res ->
-                    val v = res.get(0).value
-                    @Suppress("UNCHECKED_CAST")
-                    if (v is Array<*> && v.isNotEmpty() && v[0] is Array<*>) {
-                        result = pool((v[0] as Array<FloatArray>), m.pooling)
-                    } else if (v is Array<*> && v.isNotEmpty() && v[0] is FloatArray) {
-                        result = (v as Array<FloatArray>)[0]
-                    }
+                    result = toVector(res.get(0).value, m.pooling)
                 }
             } finally {
                 tensors.forEach { it.close() }
@@ -147,13 +147,32 @@ object AiEngine {
         return result?.let { normalize(it) }
     }
 
+    /** Accepts [seq][hidden] (per-token) or [1][hidden] (already pooled) model output. */
+    @Suppress("UNCHECKED_CAST")
+    private fun toVector(v: Any?, pooling: String): FloatArray? {
+        if (v !is Array<*> || v.isEmpty()) return null
+        val first = v[0]
+        return when (first) {
+            is Array<*> -> pool(first as Array<FloatArray>, pooling)
+            is FloatArray -> first
+            else -> null
+        }
+    }
+
     private fun pool(hidden: Array<FloatArray>, mode: String): FloatArray {
         if (hidden.isEmpty()) return FloatArray(0)
         if (mode == "cls") return hidden[0].copyOf()
         val dim = hidden[0].size
         val out = FloatArray(dim)
-        for (row in hidden) for (i in 0 until dim) out[i] += row[i]
-        for (i in 0 until dim) out[i] /= hidden.size
+        for (row in hidden) {
+            for (i in 0 until dim) {
+                out[i] = out[i] + row[i]
+            }
+        }
+        val count = hidden.size.toFloat()
+        for (i in 0 until dim) {
+            out[i] = out[i] / count
+        }
         return out
     }
 
@@ -225,6 +244,39 @@ object AiEngine {
     // ------------------------------------------------------------------
     fun plan(ctx: Context, text: String, a: AiContext, baseThreshold: Float): PlanResult =
         synchronized(planLock) { planLocked(ctx, text, a, baseThreshold) }
+
+    /** Plans using only exact rules (no model, no network). Returns null if any part needs real understanding. */
+    fun rulePlan(ctx: Context, text: String, a: AiContext): PlanResult? {
+        val parts = strongSplit.split(text).map { it.trim() }.filter { it.isNotEmpty() }
+        val all = ArrayList<PlanStep>()
+        var prev: PlanStep? = null
+        for (part in parts) {
+            val items = ArrayList<Resolved>()
+            val whole = rule(ctx, part, a)
+            if (whole != null && whole.conf >= 0.9f) {
+                items.add(whole)
+            } else {
+                val weak = weakSplit.split(part).map { it.trim() }.filter { it.isNotEmpty() }
+                if (weak.size <= 1) return null
+                var p = prev
+                for (seg in weak) {
+                    val r = carry(seg, p, a, true)
+                        ?: rule(ctx, seg, a)?.takeIf { it.conf >= 0.9f }
+                        ?: carry(seg, p, a, false)
+                        ?: return null
+                    items.add(r)
+                    p = r.steps.lastOrNull { it !is PlanStep.Pause } ?: p
+                }
+            }
+            for (r in items) {
+                all.addAll(r.steps)
+                prev = r.steps.lastOrNull { it !is PlanStep.Pause } ?: prev
+            }
+        }
+        if (all.isEmpty()) return null
+        for (s in all) if (s is PlanStep.Builtin && !BuiltIns.isEnabled(ctx, s.cmd.groupId())) return null
+        return PlanResult(all, source = "Rules")
+    }
 
     private val strongSplit = Regex(
         "\\s*(?:\\band then\\b|\\band after that\\b|\\bafter that\\b|\\bafterwards\\b|\\bfollowed by\\b|\\bthen\\b|;)\\s*",

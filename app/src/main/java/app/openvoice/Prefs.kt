@@ -14,6 +14,13 @@ object Prefs {
     const val KEY_AI_PLAN = "ai_show_plan"
     private const val KEY_AI_MODEL = "ai_model"
     private const val KEY_AI_SENS = "ai_sensitivity"
+    const val KEY_AI_RULES_FIRST = "ai_rules_first"
+    const val KEY_AI_SHARE_APPS = "ai_share_apps"
+    const val KEY_AI_SHARE_SCREEN = "ai_share_screen"
+    const val KEY_AI_SHELL = "ai_shell"
+    private const val KEY_AI_SOURCE = "ai_source"
+    private const val KEY_AI_SHELL_MODE = "ai_shell_mode"
+    private const val KEY_WEB_AI = "web_ai_id"
     private const val KEY_DISABLED = "disabled_builtins"
 
     private fun sp(c: Context) = c.getSharedPreferences("open_voice", Context.MODE_PRIVATE)
@@ -54,6 +61,25 @@ object Prefs {
         2 -> 0.44f
         else -> 0.54f
     }
+
+    /** Which brain AI mode uses: "local", "api" or "web". */
+    fun aiSource(c: Context): String = sp(c).getString(KEY_AI_SOURCE, "local") ?: "local"
+    fun setAiSource(c: Context, v: String) = sp(c).edit().putString(KEY_AI_SOURCE, v).apply()
+    fun aiRulesFirst(c: Context) = get(c, KEY_AI_RULES_FIRST, true)
+    fun aiShareApps(c: Context) = get(c, KEY_AI_SHARE_APPS, true)
+    fun aiShareScreen(c: Context) = get(c, KEY_AI_SHARE_SCREEN, false)
+    fun aiShell(c: Context) = get(c, KEY_AI_SHELL, false)
+    fun aiShellMode(c: Context): Mode = try {
+        Mode.valueOf(sp(c).getString(KEY_AI_SHELL_MODE, "SHIZUKU") ?: "SHIZUKU")
+    } catch (e: Exception) {
+        Mode.SHIZUKU
+    }
+    fun setAiShellMode(c: Context, m: Mode) = sp(c).edit().putString(KEY_AI_SHELL_MODE, m.name).apply()
+
+    fun webAiId(c: Context): String = sp(c).getString(KEY_WEB_AI, "") ?: ""
+    fun setWebAiId(c: Context, id: String) = sp(c).edit().putString(KEY_WEB_AI, id).apply()
+    fun webSetup(c: Context, id: String) = get(c, "web_setup_$id", false)
+    fun setWebSetup(c: Context, id: String, v: Boolean) = set(c, "web_setup_$id", v)
 
     fun disabledBuiltIns(c: Context): Set<String> =
         HashSet(sp(c).getStringSet(KEY_DISABLED, emptySet()) ?: emptySet())

@@ -53,6 +53,32 @@ back”). It also splits one sentence into several steps and runs them in order:
 small, E5 small. You can also add any compatible ONNX model by repo id. Everything runs offline once
 downloaded; the first start of a model builds a small index and caches it.
 
+## Smarter AI: three engines
+
+*Settings → Assistant mode → AI engine · API keys · Web AI* chooses what understands you. Whatever you
+pick, simple exact commands are handled locally first (switchable), and if the chosen engine fails
+Open Voice falls back to the local model.
+
+- **Local**: the on-device model described above. Private and offline.
+- **API**: any OpenAI-compatible service. Add as many keys as you like (OpenAI, OpenRouter, Groq,
+  Gemini, DeepSeek, Mistral, Together, Cerebras, xAI, or your own server). They are tried top to bottom;
+  a key that runs out of quota or is rate limited is parked and the **next key takes over**; when
+  **every key is exhausted** it switches to the local model. Each key shows its status, can be tested,
+  reordered, reset or edited. Keys are encrypted with the Android Keystore.
+- **Web AI**: a chat website (ChatGPT, Gemini, DuckDuckGo AI Chat, DeepSeek, Qwen, Claude, Grok,
+  Perplexity, Copilot, Le Chat, Kimi, Z.ai, or any URL) running in a hidden browser. The first time you
+  choose one, a login page opens; log in, tap Done, and from then on it works in the background.
+  **Clear login** wipes one site's session and cache; **Clear ALL** wipes every web AI.
+
+Online engines receive your request plus your list of installed apps (optional) and visible screen text
+(optional, off by default). The AI answers with a plan made of the same actions custom commands use
+(open app, click text, type, scroll, keys, toggles, waits, intents, app shortcuts, even if/else), so it can
+do multi-step tasks. **Let online AI use Shizuku / Root directly** is off by default; when on, the AI may
+also run input/shell actions, and obviously destructive commands are always blocked.
+
+Web AI depends on each site's page layout and may stop working when a site changes, may show checks, and
+may be against a site's terms. API is the more reliable route.
+
 ## App layout
 
 A bottom bar with three icons:
